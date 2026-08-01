@@ -24,9 +24,9 @@ final class MatchStore: ObservableObject {
         )
     }
 
-    func addFault() {
+    func addFault(type: FaultType) {
         guard var match = currentMatch else { return }
-        match.faults.append(FaultEvent(timestamp: Date()))
+        match.faults.append(FaultEvent(timestamp: Date(), type: type))
         currentMatch = match
     }
 

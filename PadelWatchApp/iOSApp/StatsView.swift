@@ -10,12 +10,21 @@ struct StatsView: View {
         return Double(total) / Double(store.matches.count)
     }
 
+    private func total(for type: FaultType) -> Int {
+        store.matches.reduce(0) { $0 + $1.faultCount(for: type) }
+    }
+
     var body: some View {
         NavigationView {
             List {
                 Section("Résumé") {
                     LabeledContent("Matchs joués", value: "\(store.matches.count)")
                     LabeledContent("Moyenne de fautes", value: String(format: "%.1f", averageFaults))
+                }
+                Section("Répartition totale") {
+                    ForEach(FaultType.allCases) { type in
+                        LabeledContent(type.rawValue, value: "\(total(for: type))")
+                    }
                 }
                 if !store.matches.isEmpty {
                     Section("Évolution des fautes") {

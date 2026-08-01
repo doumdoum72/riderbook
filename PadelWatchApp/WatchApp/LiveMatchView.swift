@@ -9,20 +9,25 @@ struct LiveMatchView: View {
             if let match = store.currentMatch {
                 VStack(spacing: 10) {
                     Text("\(match.faultCount)")
-                        .font(.system(size: 44, weight: .bold))
-                    Text("fautes")
-                        .font(.caption)
+                        .font(.system(size: 40, weight: .bold))
+                    Text("fautes totales")
+                        .font(.caption2)
                         .foregroundColor(.secondary)
 
-                    Button {
-                        store.addFault()
-                    } label: {
-                        Text("Faute +1")
-                            .font(.title3)
-                            .frame(maxWidth: .infinity)
+                    ForEach(FaultType.allCases) { type in
+                        Button {
+                            store.addFault(type: type)
+                        } label: {
+                            HStack {
+                                Text(type.rawValue)
+                                Spacer()
+                                Text("\(match.faultCount(for: type))")
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(color(for: type))
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.red)
 
                     Button {
                         store.removeLastFault()
@@ -74,6 +79,14 @@ struct LiveMatchView: View {
         .confirmationDialog("Terminer le match ?", isPresented: $showEndConfirmation) {
             Button("Terminer", role: .destructive) { store.endMatch() }
             Button("Annuler", role: .cancel) {}
+        }
+    }
+
+    private func color(for type: FaultType) -> Color {
+        switch type {
+        case .mine: return .red
+        case .provoked: return .orange
+        case .partner: return .yellow
         }
     }
 }

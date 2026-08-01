@@ -10,6 +10,11 @@ struct MatchDetailView: View {
                 LabeledContent("Équipes", value: "\(match.myTeamName) vs \(match.opponentTeamName)")
                 LabeledContent("Fautes", value: "\(match.faultCount)")
             }
+            Section("Répartition des fautes") {
+                ForEach(FaultType.allCases) { type in
+                    LabeledContent(type.rawValue, value: "\(match.faultCount(for: type))")
+                }
+            }
             Section("Sets") {
                 ForEach(match.sets) { set in
                     Text("\(set.myGames) - \(set.opponentGames)")
@@ -18,7 +23,12 @@ struct MatchDetailView: View {
             if !match.faults.isEmpty {
                 Section("Chronologie des fautes") {
                     ForEach(match.faults) { fault in
-                        Text(fault.timestamp.formatted(date: .omitted, time: .standard))
+                        HStack {
+                            Text(fault.type.rawValue)
+                            Spacer()
+                            Text(fault.timestamp.formatted(date: .omitted, time: .standard))
+                                .foregroundColor(.secondary)
+                        }
                     }
                 }
             }

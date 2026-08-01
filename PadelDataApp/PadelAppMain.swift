@@ -1,12 +1,12 @@
 import SwiftUI
 
 @main
-struct PadelWatchAppMain: App {
+struct PadelAppMain: App {
     @StateObject private var store = MatchStore()
 
     var body: some Scene {
         WindowGroup {
-            RootView()
+            RootTabView()
                 .environmentObject(store)
         }
     }

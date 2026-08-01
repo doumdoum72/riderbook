@@ -6,15 +6,11 @@ final class MatchStore: ObservableObject {
     @Published var currentMatch: Match?
 
     private let fileURL: URL
-    private let connectivity = ConnectivityManager.shared
 
     init() {
         let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         fileURL = dir.appendingPathComponent("padel_matches.json")
         load()
-        connectivity.onMatchesReceived = { [weak self] received in
-            self?.merge(received)
-        }
     }
 
     func startMatch(myTeamName: String, opponentTeamName: String) {
@@ -59,19 +55,14 @@ final class MatchStore: ObservableObject {
         matches.insert(match, at: 0)
         currentMatch = nil
         save()
-        connectivity.send(matches: matches)
     }
 
     func cancelMatch() {
         currentMatch = nil
     }
 
-    private func merge(_ received: [Match]) {
-        var byID = Dictionary(uniqueKeysWithValues: matches.map { ($0.id, $0) })
-        for match in received {
-            byID[match.id] = match
-        }
-        matches = byID.values.sorted { $0.date > $1.date }
+    func deleteMatch(at offsets: IndexSet) {
+        matches.remove(atOffsets: offsets)
         save()
     }
 

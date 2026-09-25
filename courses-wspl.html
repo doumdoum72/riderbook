@@ -1,6 +1,3 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
@@ -70,7 +67,7 @@
   body {
     margin: 0; background: var(--bg); color: var(--text);
     font: 15px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
-    padding-bottom: calc(24px + env(safe-area-inset-bottom));
+    padding-bottom: 24px;
   }
   button, input, select, textarea { font: inherit; color: inherit; }
   h1, h2, h3 { margin: 0; line-height: 1.2; }
@@ -87,8 +84,8 @@
 
   /* ---------- En-tête & onglets ---------- */
   .app-header {
-    position: sticky; top: 0; z-index: 20; background: var(--bg);
-    padding-top: env(safe-area-inset-top); border-bottom: 1px solid var(--border);
+    position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; background: var(--bg);
+    border-bottom: 1px solid var(--border);
   }
   .app-header .wrap { display: flex; align-items: center; gap: 10px; padding-top: 10px; padding-bottom: 8px; }
   .brand { font-weight: 700; font-size: 16px; letter-spacing: .2px; }
@@ -234,9 +231,9 @@
   #toast.show { opacity: 1; }
   .test-ok { color: var(--ok); }
   .test-ko { color: var(--danger); }
+  textarea.code { width: 100%; min-height: 180px; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  :focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 </style>
-</head>
-<body>
 
 <header class="app-header">
   <div class="wrap">
@@ -1012,9 +1009,12 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
   }
 
   /* ======================= Thème ======================= */
+  // Attribut data-theme posé par l'hôte (ex. claude.ai) : restauré en mode « auto ».
+  const HOST_THEME = document.documentElement.getAttribute('data-theme');
   function applyTheme() {
     const root = document.documentElement;
-    if (state.theme === 'auto') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', state.theme);
+    const t = state.theme === 'auto' ? HOST_THEME : state.theme;
+    if (t) root.setAttribute('data-theme', t); else root.removeAttribute('data-theme');
     const btn = $('#themeBtn');
     btn.textContent = state.theme === 'auto' ? '◐' : state.theme === 'dark' ? '☾' : '☀';
     btn.title = 'Thème : ' + (state.theme === 'auto' ? 'automatique' : state.theme === 'dark' ? 'sombre' : 'clair');
@@ -1133,6 +1133,14 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
     const d = sheet();
     if (typeof d.showModal === 'function') { if (!d.open) d.showModal(); } else d.setAttribute('open', '');
     $('#sheetBody').scrollTop = 0;
+  }
+  /** Confirmation dans la page : remplace confirm(), bloqué dans les cadres sandbox. */
+  let pendingConfirm = null;
+  function askConfirm(message, onYes, label) {
+    pendingConfirm = onYes;
+    openSheet(sheetHead('Confirmer') + '<p>' + esc(message) + '</p>' +
+      '<div class="row section"><button class="btn danger" data-action="confirm-yes">' + esc(label || 'Supprimer') + '</button>' +
+      '<button class="btn ghost" data-action="close-sheet">Annuler</button></div>');
   }
   function closeSheet() { const d = sheet(); if (d.open) { if (typeof d.close === 'function') d.close(); else d.removeAttribute('open'); } }
   const sheetHead = (title) => '<div class="sheet-head"><h2>' + title + '</h2><button class="btn icon ghost" data-action="close-sheet" aria-label="Fermer">✕</button></div>';
@@ -1516,7 +1524,49 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
   /* ---------- Import / export ---------- */
   function exportJSON() {
     const payload = { format: 'akse-coach.events', version: 1, exporte: new Date().toISOString(), saison: DATA.meta.saison, events: allEvents() };
-    download('akse-evenements-' + TODAY + '.json', JSON.stringify(payload, null, 2), 'application/json');
+    openExport('Export JSON des événements', 'akse-evenements-' + TODAY + '.json', JSON.stringify(payload, null, 2), 'application/json');
+  }
+  /** Export : le texte est affiché et copiable (fiable partout, y compris dans
+   *  claude.ai où les téléchargements sont bloqués) ; le bouton Télécharger
+   *  fonctionne quand le fichier est ouvert directement dans un navigateur. */
+  let pendingExport = null;
+  function openExport(title, filename, content, mime) {
+    pendingExport = { filename, content, mime };
+    openSheet(sheetHead(esc(title)) +
+      '<p class="small muted">Copiez le contenu (puis collez-le dans Notes, un mail ou akse-coach), ou téléchargez le fichier si votre navigateur le permet.</p>' +
+      '<textarea class="code" id="exportText" readonly>' + esc(content) + '</textarea>' +
+      '<div class="row section"><button class="btn primary" data-action="copy-export">Copier</button>' +
+      '<button class="btn" data-action="download-export">Télécharger ' + esc(filename.split('.').pop()) + '</button></div>');
+  }
+  /** Enregistrement d'un fichier : via la capacité « downloads » de claude.ai
+   *  quand elle est disponible (extensions autorisées : json, txt…), sinon
+   *  téléchargement classique du navigateur (fichier ouvert hors claude.ai). */
+  const SAVE_EXT_OK = ['json', 'txt', 'csv', 'md'];
+  let downloadsNs;
+  async function saveFile(f) {
+    const ext = f.filename.split('.').pop();
+    if (downloadsNs === undefined) {
+      try { downloadsNs = window.claude && typeof window.claude.use === 'function' ? await window.claude.use('downloads') : null; }
+      catch (e) { downloadsNs = null; }
+    }
+    if (downloadsNs && SAVE_EXT_OK.includes(ext)) {
+      try { await downloadsNs.save({ filename: f.filename, data: f.content }); toast('Fichier enregistré'); }
+      catch (e) {
+        const code = e && e.code;
+        toast(code === 'declined' ? 'Enregistrement annulé' : code === 'rate_limited' ? 'Une demande est déjà ouverte, réessayez' : 'Enregistrement impossible ici : utilisez Copier');
+      }
+      return;
+    }
+    if (window.claude && !SAVE_EXT_OK.includes(ext)) { toast('Format .' + ext + ' non enregistrable dans claude.ai : utilisez Copier'); return; }
+    download(f.filename, f.content, f.mime);
+    toast('Si rien ne se passe, utilisez Copier');
+  }
+  function openImport() {
+    openSheet(sheetHead('Importer des événements') +
+      '<p class="small muted">Collez un JSON exporté (format { events: [...] } ou tableau), ou choisissez un fichier.</p>' +
+      '<textarea class="code" id="importText" placeholder=\'{ "events": [ ... ] }\'></textarea>' +
+      '<div class="row section"><button class="btn primary" data-action="import-paste">Importer le texte collé</button>' +
+      '<button class="btn" data-action="import-file">Choisir un fichier</button></div>');
   }
   function importJSON(text) {
     let parsed;
@@ -1579,8 +1629,8 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
     'new-stage': () => openStageForm(null),
     'edit-stage': (el) => openStageForm(el.dataset.id),
     'delete-stage': (el) => {
-      if (!confirm('Supprimer ce stage ?')) return;
-      state.stages = state.stages.filter((s) => s.id !== el.dataset.id); save.stages(); closeSheet(); renderCalendar(); toast('Stage supprimé');
+      const id = el.dataset.id;
+      askConfirm('Supprimer ce stage ?', () => { state.stages = state.stages.filter((s) => s.id !== id); save.stages(); closeSheet(); renderCalendar(); toast('Stage supprimé'); });
     },
     'simulate-here': (el) => {
       const ev = eventById(el.dataset.id); if (!ev) return;
@@ -1599,19 +1649,20 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
     'new-result': () => openResultForm(null),
     'edit-result': (el) => openResultForm(el.dataset.id),
     'delete-result': (el) => {
-      if (!confirm('Supprimer ce résultat ?')) return;
-      state.results = state.results.filter((r) => r.id !== el.dataset.id); save.results(); closeSheet(); renderSim();
+      const id = el.dataset.id;
+      askConfirm('Supprimer ce résultat ?', () => { state.results = state.results.filter((r) => r.id !== id); save.results(); closeSheet(); renderSim(); toast('Résultat supprimé'); });
     },
     'new-athlete': () => openAthleteForm(false),
     'edit-athlete': () => openAthleteForm(true),
     'delete-athlete': (el) => {
-      if (!confirm('Supprimer cet athlète et tous ses résultats ?')) return;
       const id = el.dataset.id;
+      askConfirm('Supprimer cet athlète et tous ses résultats ?', () => {
       state.athletes = state.athletes.filter((a) => a.id !== id);
       state.results = state.results.filter((r) => r.athleteId !== id);
       state.stages.forEach((s) => { s.athletes = s.athletes.filter((x) => x !== id); });
       ui.sim.athleteId = state.athletes[0] ? state.athletes[0].id : null;
-      save.athletes(); save.results(); save.stages(); closeSheet(); renderSim();
+      save.athletes(); save.results(); save.stages(); closeSheet(); renderSim(); toast('Athlète supprimé');
+      });
     },
     'apply-rvalue': (el, ev) => {
       ev.preventDefault();
@@ -1624,13 +1675,24 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
     'exp-date': (el) => { ui.sim.expTarget = el.dataset.date; renderExpiry(); },
     'reset-thresholds': () => { state.settings.thresholds = clone(DATA.seuils); save.settings(); renderSettings(); toast('Seuils rétablis'); },
     'export-json': () => exportJSON(),
-    'import-json': () => $('#importFile').click(),
+    'import-json': () => openImport(),
+    'import-file': () => $('#importFile').click(),
+    'import-paste': () => { const t = $('#importText').value.trim(); if (!t) { toast('Collez d\'abord un JSON'); return; } closeSheet(); importJSON(t); },
+    'copy-export': () => {
+      const ta = $('#exportText');
+      const fallback = () => { ta.focus(); ta.select(); ta.setSelectionRange(0, ta.value.length); toast('Texte sélectionné : utilisez Copier du menu'); };
+      try { navigator.clipboard.writeText(ta.value).then(() => toast('Copié dans le presse-papiers'), fallback); } catch (e) { fallback(); }
+    },
+    'download-export': () => { if (pendingExport) saveFile(pendingExport); },
     'export-ics': () => {
       const evs = filteredEvents();
-      download('akse-calendrier-' + TODAY + '.ics', E.toICS(evs, { now: new Date().toISOString(), calName: 'ak.se · Courses & stages ' + DATA.meta.saison }), 'text/calendar');
-      toast(evs.length + ' événement(s) exporté(s) (filtres du calendrier appliqués)');
+      openExport('Export .ics (' + evs.length + ' événements, filtres du calendrier appliqués)', 'akse-calendrier-' + TODAY + '.ics',
+        E.toICS(evs, { now: new Date().toISOString(), calName: 'ak.se · Courses & stages ' + DATA.meta.saison }), 'text/calendar');
     },
-    'reset-courses': () => { if (!confirm('Revenir au calendrier des courses d\'origine ?')) return; state.courses = null; store.remove('courses'); renderAll(); renderSettings(); toast('Calendrier des courses rétabli'); },
+    'reset-courses': () => askConfirm('Revenir au calendrier des courses d\'origine ? Les courses importées seront remplacées.', () => {
+      state.courses = null; store.remove('courses'); closeSheet(); renderAll(); renderSettings(); toast('Calendrier des courses rétabli');
+    }, 'Rétablir'),
+    'confirm-yes': () => { const fn = pendingConfirm; pendingConfirm = null; if (fn) fn(); },
     'reset-examples': () => {
       const exIds = DATA.exemple.athletes.map((a) => a.id);
       state.athletes = state.athletes.filter((a) => !exIds.includes(a.id)).concat(clone(DATA.exemple.athletes));
@@ -1638,11 +1700,12 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
       save.athletes(); save.results(); toast('Exemples rechargés');
     },
     'clear-examples': () => {
-      if (!confirm('Supprimer les athlètes et résultats d\'EXEMPLE ?')) return;
+      askConfirm('Supprimer les athlètes et résultats d\'EXEMPLE ?', () => {
       state.athletes = state.athletes.filter((a) => !a.exemple);
       state.results = state.results.filter((r) => !r.exemple);
       ui.sim.athleteId = state.athletes[0] ? state.athletes[0].id : null;
-      save.athletes(); save.results(); toast('Exemples supprimés');
+      save.athletes(); save.results(); closeSheet(); toast('Exemples supprimés');
+      });
     }
   };
 
@@ -1710,6 +1773,7 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
   });
 
   /* ---------- Démarrage ---------- */
+  document.documentElement.lang = 'fr';
   applyTheme();
   renderCalendar();
 
@@ -1717,5 +1781,3 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
   globalThis.WSPLModule = { state, ui, allEvents, renderAll, showTab };
 })();
 </script>
-</body>
-</html>

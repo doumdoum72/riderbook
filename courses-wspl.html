@@ -149,7 +149,17 @@
   /* ---------- Calendrier ---------- */
   .filters { display: grid; gap: 8px; }
   .month-nav { display: flex; align-items: center; justify-content: space-between; margin: 14px 0 8px; }
-  .month-nav h2 { text-transform: capitalize; }
+  .month-nav { gap: 8px; }
+  .month-pick { flex: 1; min-width: 0; }
+  .month-pick select {
+    width: 100%; text-align: center; text-align-last: center; font-weight: 700; font-size: 18px;
+    background: transparent; border-color: transparent; text-transform: capitalize; cursor: pointer;
+  }
+  .nav-arrow { width: 44px; min-height: 44px; font-size: 22px; touch-action: manipulation; }
+  .nav-arrow:disabled { opacity: .35; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .cal { touch-action: pan-y; }
+  button, select { touch-action: manipulation; }
   .cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }
   .cal .dow { text-align: center; font-size: 11px; color: var(--muted); font-weight: 600; padding: 2px 0; }
   .day {
@@ -284,6 +294,9 @@ const WSPL_DATA = {
     saison: "2026-27",
     debutSaison: "2026-10-01",
     finSaison: "2027-04-30",
+    // Plage navigable du calendrier (élargie automatiquement si un événement en sort).
+    navDebut: "2026-07-01",
+    navFin: "2027-06-30",
     calendrierAu: "2026-09-25",
     statut: "Calendrier PROVISOIRE au 25/09/2026 — toutes les courses sont à confirmer."
   },
@@ -1023,12 +1036,27 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
   /* =================================================================
      CALENDRIER
      ================================================================= */
-  const seasonMonths = (() => {
-    const out = []; let [y, m] = parts(DATA.meta.debutSaison); const [ye, me] = parts(DATA.meta.finSaison);
+  /** Mois navigables : plage DATA.meta.navDebut → navFin, élargie au mois
+   *  courant et à tout événement (stage d'été, etc.) qui en sortirait. */
+  function navMonths() {
+    const evs = allEvents();
+    const lo = [DATA.meta.navDebut.slice(0, 7), TODAY.slice(0, 7)].concat(evs.map((e) => e.debut.slice(0, 7))).sort()[0];
+    const hi = [DATA.meta.navFin.slice(0, 7), TODAY.slice(0, 7)].concat(evs.map((e) => e.fin.slice(0, 7))).sort().pop();
+    const out = []; let [y, m] = parts(lo + '-01'); const [ye, me] = parts(hi + '-01');
     while (y < ye || (y === ye && m <= me)) { out.push(y + '-' + String(m).padStart(2, '0')); m++; if (m > 12) { m = 1; y++; } }
     return out;
+  }
+  // Ouverture : le mois courant s'il contient des événements, sinon le prochain mois qui en a.
+  ui.month = (() => {
+    const cur = TODAY.slice(0, 7);
+    const withEvents = navMonths().filter((mm) => mm >= cur && allEvents().some((e) => e.debut.slice(0, 7) <= mm && e.fin.slice(0, 7) >= mm));
+    return withEvents[0] || cur;
   })();
-  ui.month = seasonMonths.find((mm) => mm >= TODAY.slice(0, 7)) || seasonMonths[0];
+  function goMonth(step) {
+    const months = navMonths();
+    const i = months.indexOf(ui.month) + step;
+    if (i >= 0 && i < months.length) { ui.month = months[i]; ui.selectedDay = null; renderCalendar(); }
+  }
 
   function eventCard(e, overlaps) {
     const conflict = overlaps[e.id];
@@ -1066,11 +1094,15 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
     const first = new Date(Date.UTC(y, m - 1, 1));
     const offset = (first.getUTCDay() + 6) % 7; // lundi = 0
     const nDays = new Date(Date.UTC(y, m, 0)).getUTCDate();
-    const idx = seasonMonths.indexOf(ui.month);
+    const months = navMonths();
+    const idx = months.indexOf(ui.month);
     let html = '<div class="month-nav">' +
-      '<button class="btn icon" data-action="month" data-step="-1" ' + (idx <= 0 ? 'disabled' : '') + ' aria-label="Mois précédent">‹</button>' +
-      '<h2>' + MOIS[m - 1] + ' ' + y + '</h2>' +
-      '<button class="btn icon" data-action="month" data-step="1" ' + (idx >= seasonMonths.length - 1 ? 'disabled' : '') + ' aria-label="Mois suivant">›</button></div>';
+      '<button type="button" class="btn icon nav-arrow" data-action="month" data-step="-1" ' + (idx <= 0 ? 'disabled' : '') + ' aria-label="Mois précédent">‹</button>' +
+      '<label class="month-pick"><span class="sr">Choisir le mois</span><select id="monthSelect" data-cal="month">' +
+        months.map((mm) => { const [yy, mo] = parts(mm + '-01'); return '<option value="' + mm + '"' + (mm === ui.month ? ' selected' : '') + '>' + MOIS[mo - 1] + ' ' + yy + '</option>'; }).join('') +
+      '</select></label>' +
+      '<button type="button" class="btn icon nav-arrow" data-action="month" data-step="1" ' + (idx >= months.length - 1 ? 'disabled' : '') + ' aria-label="Mois suivant">›</button></div>' +
+      (ui.month !== TODAY.slice(0, 7) ? '<div class="row" style="justify-content:center;margin:-2px 0 8px"><button type="button" class="btn sm ghost" data-action="month-today">Aujourd\'hui</button></div>' : '');
     html += '<div class="cal">' + ['L', 'M', 'M', 'J', 'V', 'S', 'D'].map((d) => '<div class="dow">' + d + '</div>').join('');
     for (let i = 0; i < offset; i++) html += '<div class="day out"></div>';
     for (let d = 1; d <= nDays; d++) {
@@ -1217,7 +1249,7 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
     closeSheet();
     const conflicts = E.detectOverlaps(allEvents())[id];
     toast(conflicts ? '⚠ Stage enregistré — chevauche ' + conflicts.length + ' course(s)' : 'Stage enregistré');
-    ui.month = seasonMonths.includes(ev.debut.slice(0, 7)) ? ev.debut.slice(0, 7) : ui.month;
+    ui.month = ev.debut.slice(0, 7);
     renderCalendar();
   }
 
@@ -1615,9 +1647,9 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
     'close-sheet': () => closeSheet(),
     'cal-view': (el) => { ui.calView = el.dataset.v; renderCalendar(); },
     'month': (el) => {
-      const i = seasonMonths.indexOf(ui.month) + Number(el.dataset.step);
-      if (i >= 0 && i < seasonMonths.length) { ui.month = seasonMonths[i]; ui.selectedDay = null; renderCalendar(); }
+      goMonth(Number(el.dataset.step));
     },
+    'month-today': () => { ui.month = TODAY.slice(0, 7); ui.selectedDay = TODAY; renderCalendar(); },
     'select-day': (el) => { ui.selectedDay = ui.selectedDay === el.dataset.day ? null : el.dataset.day; renderCalendar(); },
     'clear-day': () => { ui.selectedDay = null; renderCalendar(); },
     'filter-disc': (el) => {
@@ -1715,6 +1747,17 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
     const fn = actions[el.dataset.action];
     if (fn) fn(el, ev);
   });
+  // Glissement horizontal sur la grille du mois → mois précédent / suivant.
+  let touchStart = null;
+  document.addEventListener('touchstart', (ev) => {
+    touchStart = ev.target.closest && ev.target.closest('.cal') && ev.touches.length === 1 ? { x: ev.touches[0].clientX, y: ev.touches[0].clientY } : null;
+  }, { passive: true });
+  document.addEventListener('touchend', (ev) => {
+    if (!touchStart) return;
+    const t = ev.changedTouches[0], dx = t.clientX - touchStart.x, dy = t.clientY - touchStart.y;
+    touchStart = null;
+    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) goMonth(dx < 0 ? 1 : -1);
+  }, { passive: true });
   // Clic sur le fond de la modale → fermeture.
   sheet().addEventListener('click', (ev) => { if (ev.target === sheet()) closeSheet(); });
 
@@ -1741,6 +1784,7 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
 
   document.addEventListener('change', (ev) => {
     const el = ev.target;
+    if (el.dataset.cal === 'month') { ui.month = el.value; ui.selectedDay = null; renderCalendar(); return; }
     if (el.dataset.filter) { ui.filters[el.dataset.filter] = el.value; renderCalendar(); return; }
     if (el.dataset.ctx) {
       const k = el.dataset.ctx, c = ui.sim.ctx;

@@ -303,6 +303,9 @@ const WSPL_DATA = {
 
   /* ---- Courses (calendrier provisoire, à confirmer) ---- */
   courses: [
+    // Septembre — indoor (ajout du 25/09 : dates d'après une recherche web, circuit & niveau à confirmer)
+    { id: "c-2026-09-21-landgraaf",    type: "course", titre: "FIS · Landgraaf (indoor)",      debut: "2026-09-21", fin: "2026-09-26", lieu: "Landgraaf",    pays: "NED", disciplines: ["SS"],       circuit: "AUTRE", niveauWSPL: null, athletes: [], notes: "SnowWorld Landgraaf. Dates relevées sur le calendrier FIS (recherche web du 25/09/2026) ; circuit et niveau WSPL à confirmer — utiliser « Modifier ».", aConfirmer: true },
+
     // Coupe du Monde FIS — niveau WSPL Elite
     { id: "c-2026-11-26-innsbruck",    type: "course", titre: "Coupe du Monde · Innsbruck",    debut: "2026-11-26", fin: "2026-11-28", lieu: "Innsbruck",    pays: "AUT", disciplines: ["BA"],       circuit: "WC", niveauWSPL: "Elite", athletes: [], notes: "", aConfirmer: true },
     { id: "c-2026-12-03-pekin",        type: "course", titre: "Coupe du Monde · Pékin",        debut: "2026-12-03", fin: "2026-12-05", lieu: "Pékin",        pays: "CHN", disciplines: ["BA"],       circuit: "WC", niveauWSPL: "Elite", athletes: [], notes: "", aConfirmer: true },
@@ -1153,7 +1156,7 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
       '<div class="section row"><div class="seg" role="group" aria-label="Vue">' +
         '<button data-action="cal-view" data-v="mois" aria-pressed="' + (ui.calView === 'mois') + '">Mois</button>' +
         '<button data-action="cal-view" data-v="liste" aria-pressed="' + (ui.calView === 'liste') + '">Liste</button></div>' +
-        '<span class="spacer"></span><button class="btn primary" data-action="new-stage">＋ Stage</button></div>' +
+        '<span class="spacer"></span><button class="btn" data-action="new-course">＋ Course</button><button class="btn primary" data-action="new-stage">＋ Stage</button></div>' +
       '<div class="section">' + renderFilters() + '</div>' +
       (ui.calView === 'mois' ? renderMonth(events, overlaps) : '<div class="section">' + renderList(events, overlaps) + '</div>');
   }
@@ -1205,20 +1208,30 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
       const ds = e.disciplines.length ? e.disciplines : [];
       if (ds.length) html += ds.map((d) => '<button class="btn primary" data-action="simulate-here" data-id="' + esc(e.id) + '" data-d="' + d + '">Simuler un résultat ici · ' + d + '</button>').join('');
       else html += '<button class="btn primary" data-action="simulate-here" data-id="' + esc(e.id) + '" data-d="">Simuler un résultat ici</button>';
-    } else {
-      html += '<button class="btn primary" data-action="edit-stage" data-id="' + esc(e.id) + '">Modifier</button>' +
-        '<button class="btn danger" data-action="delete-stage" data-id="' + esc(e.id) + '">Supprimer</button>';
+      html += '</div><div class="row" style="margin-top:8px">';
     }
+    html += '<button class="btn' + (e.type === 'stage' ? ' primary' : '') + '" data-action="edit-event" data-id="' + esc(e.id) + '">Modifier</button>' +
+      '<button class="btn danger" data-action="delete-event" data-id="' + esc(e.id) + '">Supprimer</button>';
     html += '</div>';
     openSheet(html);
   }
 
-  function openStageForm(id) {
-    const s = id ? state.stages.find((x) => x.id === id) : null;
-    const v = s || { titre: '', debut: ui.selectedDay || TODAY, fin: ui.selectedDay || TODAY, lieu: '', pays: '', disciplines: [], athletes: [], notes: '' };
-    openSheet(sheetHead(s ? 'Modifier le stage' : 'Nouveau stage') +
-      '<form id="stageForm" class="stack" data-id="' + esc(s ? s.id : '') + '">' +
-      '<label class="field">Titre<input type="text" name="titre" required value="' + esc(v.titre) + '" placeholder="Stage glacier, prépa physique…"></label>' +
+  /** Formulaire commun stage / course (même modèle d'événement). */
+  function openEventForm(id, type) {
+    const s = id ? eventById(id) : null;
+    const t = s ? s.type : type;
+    const isCourse = t === 'course';
+    const v = s || { titre: '', debut: ui.selectedDay || TODAY, fin: ui.selectedDay || TODAY, lieu: '', pays: '', disciplines: [], athletes: [], notes: '',
+      circuit: isCourse ? 'EC' : 'AUTRE', niveauWSPL: null, aConfirmer: false };
+    const nom = isCourse ? 'la course' : 'le stage';
+    openSheet(sheetHead(s ? 'Modifier ' + nom : isCourse ? 'Nouvelle course' : 'Nouveau stage') +
+      '<form id="eventForm" class="stack" data-id="' + esc(s ? s.id : '') + '" data-type="' + t + '">' +
+      '<label class="field">Titre<input type="text" name="titre" required value="' + esc(v.titre) + '" placeholder="' + (isCourse ? 'Coupe d\'Europe · Landgraaf' : 'Stage glacier, prépa physique…') + '"></label>' +
+      (isCourse ? '<div class="grid2"><label class="field">Circuit<select name="circuit">' +
+          E.CIRCUITS.map((c) => '<option value="' + c + '"' + (v.circuit === c ? ' selected' : '') + '>' + c + ' · ' + E.CIRCUIT_LABELS[c] + '</option>').join('') + '</select></label>' +
+        '<label class="field">Niveau WSPL<select name="niveau"><option value="">Non précisé</option>' +
+          E.LEVEL_NAMES.slice().reverse().map((n) => '<option value="' + n + '"' + (v.niveauWSPL === n ? ' selected' : '') + '>' + '★'.repeat(E.LEVELS[n].etoiles) + ' ' + n + '</option>').join('') + '</select></label></div>' +
+        '<label class="row small"><input type="checkbox" name="aConfirmer"' + (v.aConfirmer ? ' checked' : '') + '> À confirmer</label>' : '') +
       '<div class="grid2"><label class="field">Début<input type="date" name="debut" required value="' + esc(v.debut) + '"></label>' +
       '<label class="field">Fin<input type="date" name="fin" required value="' + esc(v.fin) + '"></label></div>' +
       '<div class="grid2"><label class="field">Lieu<input type="text" name="lieu" value="' + esc(v.lieu) + '"></label>' +
@@ -1228,27 +1241,41 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
       (state.athletes.length ? '<fieldset style="border:0;padding:0;margin:0"><legend class="small muted">Athlètes</legend><div class="stack" style="margin-top:4px">' +
         state.athletes.map((a) => '<label class="row small"><input type="checkbox" name="ath" value="' + esc(a.id) + '"' + (v.athletes.includes(a.id) ? ' checked' : '') + '> ' + esc(a.nom) + '</label>').join('') + '</div></fieldset>' : '') +
       '<label class="field">Notes<textarea name="notes" rows="3">' + esc(v.notes) + '</textarea></label>' +
-      '<p class="small test-ko" id="stageErr"></p>' +
+      '<p class="small test-ko" id="eventErr"></p>' +
       '<div class="row"><button class="btn primary" type="submit">Enregistrer</button><button class="btn ghost" type="button" data-action="close-sheet">Annuler</button></div>' +
       '</form>');
   }
 
-  function submitStage(form) {
+  function submitEvent(form) {
     const fd = new FormData(form);
-    const id = form.dataset.id || uid('s');
+    const type = form.dataset.type === 'course' ? 'course' : 'stage';
+    const id = form.dataset.id || uid(type === 'course' ? 'c' : 's');
     const ev = E.normalizeEvent({
-      id, type: 'stage', titre: (fd.get('titre') || '').trim(), debut: fd.get('debut'), fin: fd.get('fin'),
+      id, type, titre: (fd.get('titre') || '').trim(), debut: fd.get('debut'), fin: fd.get('fin'),
       lieu: (fd.get('lieu') || '').trim(), pays: (fd.get('pays') || '').trim().toUpperCase(),
-      disciplines: fd.getAll('disc'), circuit: 'AUTRE', niveauWSPL: null, athletes: fd.getAll('ath'), notes: (fd.get('notes') || '').trim()
+      disciplines: fd.getAll('disc'),
+      circuit: type === 'course' ? fd.get('circuit') : 'AUTRE',
+      niveauWSPL: type === 'course' ? (fd.get('niveau') || null) : null,
+      aConfirmer: type === 'course' && fd.get('aConfirmer') === 'on',
+      athletes: fd.getAll('ath'), notes: (fd.get('notes') || '').trim()
     });
     const errs = E.validateEvent(ev);
-    if (errs.length) { $('#stageErr').textContent = 'À corriger : ' + errs.join(', '); return; }
-    const i = state.stages.findIndex((s) => s.id === id);
-    if (i >= 0) state.stages[i] = ev; else state.stages.push(ev);
-    save.stages();
+    if (errs.length) { $('#eventErr').textContent = 'À corriger : ' + errs.join(', '); return; }
+    if (type === 'stage') {
+      const i = state.stages.findIndex((s) => s.id === id);
+      if (i >= 0) state.stages[i] = ev; else state.stages.push(ev);
+      save.stages();
+    } else {
+      // Toute modification de course fige une copie locale du calendrier (Réglages → revenir à l'origine).
+      const list = courses().map((c) => Object.assign({}, c));
+      const i = list.findIndex((c) => c.id === id);
+      if (i >= 0) list[i] = ev; else list.push(ev);
+      state.courses = list; save.courses();
+    }
     closeSheet();
     const conflicts = E.detectOverlaps(allEvents())[id];
-    toast(conflicts ? '⚠ Stage enregistré — chevauche ' + conflicts.length + ' course(s)' : 'Stage enregistré');
+    const label = type === 'course' ? 'Course enregistrée' : 'Stage enregistré';
+    toast(conflicts ? '⚠ ' + label + ' — chevauchement (' + conflicts.length + ')' : label);
     ui.month = ev.debut.slice(0, 7);
     renderCalendar();
   }
@@ -1286,11 +1313,14 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
       '<div class="section card stack">' +
         '<div class="row"><label class="field" style="flex:1">Athlète<select data-sim="athlete">' +
           state.athletes.map((x) => '<option value="' + esc(x.id) + '"' + (x.id === a.id ? ' selected' : '') + '>' + esc(x.nom) + ' (' + x.genre + ')</option>').join('') +
-        '</select></label><button class="btn icon" data-action="new-athlete" aria-label="Ajouter un athlète" style="margin-top:18px">＋</button>' +
+        '</select></label>' +
         '<button class="btn icon ghost" data-action="edit-athlete" aria-label="Modifier l\'athlète" style="margin-top:18px">✎</button></div>' +
+        '<button class="btn primary" data-action="new-athlete">＋ Nouvel athlète</button>' +
         '<div class="grid2"><label class="field">Genre<select data-sim="genre"><option value="H"' + (a.genre === 'H' ? ' selected' : '') + '>Homme</option><option value="F"' + (a.genre === 'F' ? ' selected' : '') + '>Femme</option></select></label>' +
         '<label class="field">Date de référence<input type="date" data-sim="refDate" value="' + esc(ui.sim.refDate) + '"></label></div>' +
         (a.exemple ? '<div class="banner"><b>EXEMPLE</b> — athlète et résultats fictifs, à remplacer.</div>' : '') +
+        (!athleteResults().length ? '<div class="banner"><b>' + esc(a.nom) + ' n\'a pas encore de résultat.</b> 1) Ajoutez ses résultats des 52 dernières semaines (course, place, nombre de classés) : son score WSPL se calcule par discipline. 2) Utilisez « Et si ? » pour simuler une place sur une course à venir.' +
+          '<div class="row" style="margin-top:8px"><button class="btn sm primary" data-action="new-result">＋ Ajouter un résultat</button></div></div>' : '') +
       '</div>' +
       '<div class="section"><h2>Comparatif des disciplines</h2><div class="card" style="margin-top:8px;padding:6px 10px" id="sim-compare"></div></div>' +
       '<div class="section" id="sim-detail"></div>' +
@@ -1305,7 +1335,7 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
     $('#sim-compare').innerHTML = '<table class="t"><thead><tr><th>Disc.</th><th class="r">Score</th><th class="r">Rés.</th><th>Statut</th></tr></thead><tbody>' +
       rows.map((r) => '<tr class="clickable' + (r.discipline === ui.sim.discipline ? ' active' : '') + '" data-action="pick-disc" data-d="' + r.discipline + '">' +
         '<td><b>' + r.discipline + '</b><div class="tiny muted">' + E.DISCIPLINE_LABELS[r.discipline] + '</div></td>' +
-        '<td class="r num"><b>' + pts(r.score) + '</b>' + (r.complete ? '<div class="tiny muted">complété par 0</div>' : '') + '</td>' +
+        '<td class="r num"><b>' + pts(r.score) + '</b>' + (r.complete && r.nbResultats ? '<div class="tiny muted">complété par 0</div>' : '') + '</td>' +
         '<td class="r num">' + r.nbResultats + '</td>' +
         '<td>' + statusChip(r.statut) + '</td></tr>').join('') +
       '</tbody></table>' +
@@ -1336,7 +1366,7 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
             '<div style="min-width:0"><div class="small" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(r.course || '—') + '</div>' +
               '<div class="tiny muted">' + r.place + 'e / ' + r.F + ' · PL ' + r.PL +
               (topIds.has(r.id) ? ' · <span class="top-badge">★ top 3</span>' : '') +
-              (r.points === null ? ' · <span class="test-ko">données invalides</span>' : out ? ' · hors fenêtre' : ' · sort le ' + fmtDate(E.expiryDate(r.date))) + '</div></div>' +
+              (r.points === null ? ' · <span class="test-ko">données invalides</span>' : out && r.date > ui.sim.refDate ? ' · <span class="test-ko">postérieur à la date de référence</span>' : out ? ' · hors fenêtre' : ' · sort le ' + fmtDate(E.expiryDate(r.date))) + '</div></div>' +
             '<div class="row" style="gap:4px"><span class="pts num">' + (r.points === null ? '—' : pts(r.points)) + '</span>' +
               '<button class="btn sm ghost" data-action="edit-result" data-id="' + esc(r.id) + '" aria-label="Modifier">✎</button></div></div>';
         }).join('') : '<p class="small muted">Aucun résultat dans cette discipline.</p>') +
@@ -1464,6 +1494,10 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
       '<form id="resultForm" class="stack" data-id="' + esc(r ? r.id : '') + '">' +
       '<div class="grid2"><label class="field">Date<input type="date" name="date" required value="' + esc(v.date) + '"></label>' +
       '<label class="field">Discipline<select name="discipline">' + E.DISCIPLINES.map((d) => '<option' + (d === v.discipline ? ' selected' : '') + '>' + d + '</option>').join('') + '</select></label></div>' +
+      '<p class="small muted" style="margin:0">Résultat de ' + esc(athlete().nom) + '</p>' +
+      '<label class="field">Course du calendrier (préremplit date, discipline et PL)<select name="fromCourse"><option value="">— Saisie libre —</option>' +
+        courses().filter((c) => c.debut <= E.addDays(TODAY, 1)).slice().reverse().map((c) => '<option value="' + esc(c.id) + '">' + esc(fmtRange(c.debut, c.fin) + ' · ' + c.titre) + '</option>').join('') +
+      '</select></label>' +
       '<label class="field">Course<input type="text" name="course" list="courseList" value="' + esc(v.course) + '" placeholder="Nom de la course"></label>' +
       '<datalist id="courseList">' + courses().map((c) => '<option value="' + esc(c.titre) + '">').join('') + '</datalist>' +
       '<div class="grid3"><label class="field">Place<input type="number" name="place" min="1" required inputmode="numeric" value="' + v.place + '"></label>' +
@@ -1502,7 +1536,7 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
     const a = edit ? athlete() : null;
     openSheet(sheetHead(a ? 'Modifier l\'athlète' : 'Nouvel athlète') +
       '<form id="athleteForm" class="stack" data-id="' + esc(a ? a.id : '') + '">' +
-      '<label class="field">Nom<input type="text" name="nom" required value="' + esc(a ? a.nom : '') + '"></label>' +
+      '<label class="field">Nom<input type="text" name="nom" required autocomplete="off" placeholder="Prénom Nom" value="' + esc(a ? a.nom : '') + '"></label>' +
       '<label class="field">Genre<select name="genre"><option value="H"' + (a && a.genre === 'H' ? ' selected' : '') + '>Homme</option><option value="F"' + (a && a.genre === 'F' ? ' selected' : '') + '>Femme</option></select></label>' +
       '<div class="row"><button class="btn primary" type="submit">Enregistrer</button>' +
       (a ? '<button class="btn danger" type="button" data-action="delete-athlete" data-id="' + esc(a.id) + '">Supprimer (et ses résultats)</button>' : '') + '</div></form>');
@@ -1512,7 +1546,7 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
     const nom = (fd.get('nom') || '').trim(); if (!nom) return;
     const id = form.dataset.id;
     if (id) { const a = state.athletes.find((x) => x.id === id); a.nom = nom; a.genre = fd.get('genre'); }
-    else { const a = { id: uid('ath'), nom, genre: fd.get('genre') }; state.athletes.push(a); ui.sim.athleteId = a.id; }
+    else { const a = { id: uid('ath'), nom, genre: fd.get('genre') }; state.athletes.push(a); ui.sim.athleteId = a.id; toast(nom + ' ajouté'); }
     save.athletes(); closeSheet(); renderSim();
   }
 
@@ -1658,11 +1692,16 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
       renderCalendar();
     },
     'open-event': (el) => openEvent(el.dataset.id),
-    'new-stage': () => openStageForm(null),
-    'edit-stage': (el) => openStageForm(el.dataset.id),
-    'delete-stage': (el) => {
-      const id = el.dataset.id;
-      askConfirm('Supprimer ce stage ?', () => { state.stages = state.stages.filter((s) => s.id !== id); save.stages(); closeSheet(); renderCalendar(); toast('Stage supprimé'); });
+    'new-stage': () => openEventForm(null, 'stage'),
+    'new-course': () => openEventForm(null, 'course'),
+    'edit-event': (el) => openEventForm(el.dataset.id),
+    'delete-event': (el) => {
+      const ev = eventById(el.dataset.id); if (!ev) return;
+      askConfirm('Supprimer « ' + ev.titre + ' » ?', () => {
+        if (ev.type === 'stage') { state.stages = state.stages.filter((s) => s.id !== ev.id); save.stages(); }
+        else { state.courses = courses().filter((c) => c.id !== ev.id); save.courses(); }
+        closeSheet(); renderCalendar(); toast(ev.type === 'stage' ? 'Stage supprimé' : 'Course supprimée');
+      });
     },
     'simulate-here': (el) => {
       const ev = eventById(el.dataset.id); if (!ev) return;
@@ -1764,7 +1803,7 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
   document.addEventListener('submit', (ev) => {
     ev.preventDefault();
     const f = ev.target;
-    if (f.id === 'stageForm') submitStage(f);
+    if (f.id === 'eventForm') submitEvent(f);
     if (f.id === 'resultForm') submitResult(f);
     if (f.id === 'athleteForm') submitAthlete(f);
   });
@@ -1784,6 +1823,17 @@ if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
 
   document.addEventListener('change', (ev) => {
     const el = ev.target;
+    if (el.name === 'fromCourse' && el.closest('#resultForm')) {
+      const c = eventById(el.value), f = el.form;
+      if (c) {
+        // Course en cours : on date le résultat d'aujourd'hui pour qu'il compte tout de suite.
+        f.elements.date.value = c.fin > TODAY ? TODAY : c.fin; f.elements.course.value = c.titre;
+        if (c.disciplines.length && !c.disciplines.includes(f.elements.discipline.value)) f.elements.discipline.value = c.disciplines[0];
+        f.elements.PL.value = E.defaultPL(c).PL;
+        updateResultPreview();
+      }
+      return;
+    }
     if (el.dataset.cal === 'month') { ui.month = el.value; ui.selectedDay = null; renderCalendar(); return; }
     if (el.dataset.filter) { ui.filters[el.dataset.filter] = el.value; renderCalendar(); return; }
     if (el.dataset.ctx) {

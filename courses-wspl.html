@@ -1,0 +1,1721 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#D4A537">
+<title>Courses & Points WSPL</title>
+<!--
+  ============================================================================
+  MODULE AUTONOME « Courses & Points WSPL » — ak.se / akse-coach
+  Pôle France Snowboard · Font-Romeu · saison 2026-27
+  ----------------------------------------------------------------------------
+  Un seul fichier, aucune dépendance externe. Trois blocs JS séparés :
+    1. DATA    (<script id="wspl-data">)   : calendrier des courses, seuils,
+                                             exemples — objets JSON remplaçables.
+    2. ENGINE  (<script id="wspl-engine">) : fonctions pures (aucun accès au DOM),
+                                             exposées sur globalThis.WSPLEngine.
+    3. UI      (<script id="wspl-ui">)     : calendrier + simulateur.
+    +  TESTS   (<script id="wspl-tests">)  : harnais de tests de l'ENGINE
+                                             (résultats visibles dans Réglages
+                                             et dans la console).
+  Pour l'intégration dans akse-coach : DATA et ENGINE peuvent être copiés tels
+  quels dans des modules ES (remplacer l'IIFE par `export`), l'UI se découpe
+  selon les fonctions render*() commentées.
+  ============================================================================
+-->
+<style>
+  /* ---------- Jetons de couleur (clair par défaut) ---------- */
+  :root {
+    --gold: #D4A537;
+    --gold-ink: #8A6612;      /* or lisible sur fond clair */
+    --gold-soft: #D4A5372B;
+    --bg: #F6F4EF;
+    --surface: #FFFFFF;
+    --surface-2: #EFECE4;
+    --text: #1D1B17;
+    --muted: #6A655B;
+    --border: #E0DBCF;
+    --stage: #2C7A89;
+    --stage-soft: #2C7A8926;
+    --danger: #B83A2B;
+    --danger-soft: #B83A2B1F;
+    --ok: #2D7A4C;
+    --ok-soft: #2D7A4C1F;
+    --shadow: 0 1px 2px rgba(0,0,0,.06), 0 4px 14px rgba(0,0,0,.05);
+    --radius: 14px;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --gold-ink: #E6BE5E; --gold-soft: #D4A53733;
+      --bg: #121110; --surface: #1C1B18; --surface-2: #27251F; --text: #F2EFE7;
+      --muted: #A49E91; --border: #36332B; --stage: #62B6C5; --stage-soft: #62B6C52B;
+      --danger: #EE6E5E; --danger-soft: #EE6E5E26; --ok: #62C58E; --ok-soft: #62C58E24;
+      --shadow: 0 1px 2px rgba(0,0,0,.4); color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --gold-ink: #E6BE5E; --gold-soft: #D4A53733;
+    --bg: #121110; --surface: #1C1B18; --surface-2: #27251F; --text: #F2EFE7;
+    --muted: #A49E91; --border: #36332B; --stage: #62B6C5; --stage-soft: #62B6C52B;
+    --danger: #EE6E5E; --danger-soft: #EE6E5E26; --ok: #62C58E; --ok-soft: #62C58E24;
+    --shadow: 0 1px 2px rgba(0,0,0,.4); color-scheme: dark;
+  }
+
+  /* ---------- Base ---------- */
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  h1, h2, h3 { margin: 0; line-height: 1.2; }
+  h2 { font-size: 17px; }
+  h3 { font-size: 15px; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 0 16px; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+  .tiny { font-size: 12px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .spacer { flex: 1; }
+  .stack > * + * { margin-top: 12px; }
+  [hidden] { display: none !important; }
+
+  /* ---------- En-tête & onglets ---------- */
+  .app-header {
+    position: sticky; top: 0; z-index: 20; background: var(--bg);
+    padding-top: env(safe-area-inset-top); border-bottom: 1px solid var(--border);
+  }
+  .app-header .wrap { display: flex; align-items: center; gap: 10px; padding-top: 10px; padding-bottom: 8px; }
+  .brand { font-weight: 700; font-size: 16px; letter-spacing: .2px; }
+  .brand b { color: var(--gold-ink); }
+  .tabs { display: flex; gap: 4px; padding: 0 16px 10px; max-width: 760px; margin: 0 auto; }
+  .tab {
+    flex: 1; border: 1px solid var(--border); background: var(--surface); border-radius: 999px;
+    padding: 8px 6px; font-weight: 600; font-size: 14px; cursor: pointer;
+  }
+  .tab[aria-selected="true"] { background: var(--gold); border-color: var(--gold); color: #1D1B17; }
+
+  /* ---------- Composants ---------- */
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; box-shadow: var(--shadow); }
+  .card + .card { margin-top: 12px; }
+  .section { margin-top: 16px; }
+  .btn {
+    border: 1px solid var(--border); background: var(--surface); border-radius: 10px;
+    padding: 8px 12px; font-weight: 600; cursor: pointer; min-height: 38px;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn.primary { background: var(--gold); border-color: var(--gold); color: #1D1B17; }
+  .btn.ghost { background: transparent; }
+  .btn.danger { color: var(--danger); border-color: var(--danger); background: transparent; }
+  .btn.sm { padding: 4px 10px; min-height: 30px; font-size: 13px; }
+  .btn.icon { width: 38px; padding: 0; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .seg button { border: 0; background: var(--surface); padding: 7px 12px; font-weight: 600; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--gold-soft); color: var(--gold-ink); }
+  label.field { display: block; font-size: 13px; color: var(--muted); }
+  label.field > input, label.field > select, label.field > textarea {
+    display: block; width: 100%; margin-top: 4px; font-size: 16px; /* 16px : pas de zoom iOS */
+  }
+  input[type="text"], input[type="number"], input[type="date"], select, textarea {
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 8px 10px; min-height: 40px; font-size: 16px;
+  }
+  input[type="range"] { width: 100%; accent-color: var(--gold); }
+  input[type="checkbox"] { accent-color: var(--gold); width: 18px; height: 18px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  @media (max-width: 380px) { .grid3 { grid-template-columns: 1fr 1fr; } }
+
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; padding: 1px 8px;
+    font-size: 12px; font-weight: 600; border: 1px solid var(--border); background: var(--surface-2); white-space: nowrap;
+  }
+  .chip.gold { background: var(--gold-soft); border-color: transparent; color: var(--gold-ink); }
+  .chip.stage { background: var(--stage-soft); border-color: transparent; color: var(--stage); }
+  .chip.warn { background: var(--danger-soft); border-color: transparent; color: var(--danger); }
+  .chip.ok { background: var(--ok-soft); border-color: transparent; color: var(--ok); }
+  .chip.tbc { border-style: dashed; color: var(--muted); background: transparent; }
+  button.chip { cursor: pointer; font-size: 13px; padding: 5px 12px; }
+  button.chip[aria-pressed="true"] { background: var(--gold); border-color: var(--gold); color: #1D1B17; }
+  .stars { color: var(--gold); letter-spacing: -1px; font-size: 12px; }
+
+  .banner { border-radius: 12px; padding: 10px 12px; font-size: 13px; background: var(--gold-soft); color: var(--text); }
+  .banner.warn { background: var(--danger-soft); }
+  .banner b { color: var(--gold-ink); }
+  .banner.warn b { color: var(--danger); }
+
+  /* ---------- Calendrier ---------- */
+  .filters { display: grid; gap: 8px; }
+  .month-nav { display: flex; align-items: center; justify-content: space-between; margin: 14px 0 8px; }
+  .month-nav h2 { text-transform: capitalize; }
+  .cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }
+  .cal .dow { text-align: center; font-size: 11px; color: var(--muted); font-weight: 600; padding: 2px 0; }
+  .day {
+    min-height: 58px; border-radius: 8px; background: var(--surface); border: 1px solid var(--border);
+    padding: 3px; cursor: pointer; display: flex; flex-direction: column; gap: 2px; position: relative; text-align: left;
+    min-width: 0; overflow: hidden;
+  }
+  .day.out { visibility: hidden; }
+  .day.today { outline: 2px solid var(--gold); outline-offset: -2px; }
+  .day.sel { background: var(--gold-soft); border-color: var(--gold); }
+  .day .n { font-size: 12px; font-weight: 600; }
+  .day .bar { height: 6px; border-radius: 3px; background: var(--gold); font-size: 0; line-height: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #1D1B17; flex: none; }
+  .day .bar.stage { background: var(--stage); color: #fff; }
+  .day .bar.tbc { opacity: .55; }
+  .day .more { font-size: 10px; color: var(--muted); }
+  .day .alert { position: absolute; top: 3px; right: 4px; width: 8px; height: 8px; border-radius: 50%; background: var(--danger); }
+  @media (min-width: 560px) {
+    .day { min-height: 84px; }
+    .day .bar { height: 14px; padding: 1px 4px; font-size: 10px; }
+  }
+  .legend { display: flex; gap: 12px; font-size: 12px; color: var(--muted); margin-top: 8px; flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 12px; height: 8px; border-radius: 3px; vertical-align: middle; margin-right: 4px; }
+
+  .ev { display: flex; gap: 10px; padding: 10px 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); cursor: pointer; text-align: left; width: 100%; }
+  .ev + .ev { margin-top: 8px; }
+  .ev .stripe { width: 4px; border-radius: 4px; background: var(--gold); flex: none; }
+  .ev.stage .stripe { background: var(--stage); }
+  .ev .date { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .ev .title { font-weight: 650; }
+  .ev .meta { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+  .month-title { margin: 18px 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+
+  /* ---------- Simulateur ---------- */
+  .gauge { position: relative; height: 12px; background: var(--surface-2); border-radius: 6px; margin: 18px 0 20px; }
+  .gauge .fill { position: absolute; inset: 0 auto 0 0; background: var(--gold); border-radius: 6px; }
+  .gauge .mark { position: absolute; top: -5px; bottom: -5px; width: 2px; background: var(--text); opacity: .7; }
+  .gauge .mark span { position: absolute; top: -17px; transform: translateX(-50%); font-size: 11px; white-space: nowrap; color: var(--muted); }
+  .gauge .mark.wc span { top: 20px; }
+  .score-big { font-size: 30px; font-weight: 750; font-variant-numeric: tabular-nums; }
+  .num { font-variant-numeric: tabular-nums; }
+  table.t { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.t th, table.t td { padding: 7px 6px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; }
+  table.t th { font-size: 12px; color: var(--muted); font-weight: 600; }
+  table.t td.r, table.t th.r { text-align: right; }
+  table.t tr.clickable { cursor: pointer; }
+  table.t td .chip { white-space: normal; line-height: 1.3; padding: 2px 8px; }
+  table.t tr.active td { background: var(--gold-soft); }
+  .res { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 10px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border); }
+  .res:last-child { border-bottom: 0; }
+  .res.out { opacity: .5; }
+  .res .pts { font-weight: 700; text-align: right; }
+  .top-badge { font-size: 11px; font-weight: 700; color: var(--gold-ink); }
+  .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .kpi { background: var(--surface-2); border-radius: 10px; padding: 8px; text-align: center; }
+  .kpi .v { font-size: 20px; font-weight: 750; font-variant-numeric: tabular-nums; }
+  .kpi .l { font-size: 11px; color: var(--muted); }
+  .delta-pos { color: var(--ok); }
+  .delta-neg { color: var(--danger); }
+
+  /* ---------- Feuilles modales ---------- */
+  dialog.sheet {
+    border: 0; padding: 0; width: 100%; max-width: 560px; max-height: 88vh; border-radius: 18px 18px 0 0;
+    margin: auto auto 0; background: var(--surface); color: var(--text); box-shadow: 0 -8px 40px rgba(0,0,0,.25);
+  }
+  @media (min-width: 600px) { dialog.sheet { border-radius: 18px; margin: auto; } }
+  dialog.sheet::backdrop { background: rgba(0,0,0,.45); }
+  .sheet-inner { padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); overflow-y: auto; max-height: 88vh; }
+  .sheet-head { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; }
+  .sheet-head h2 { flex: 1; }
+  .kv { display: grid; grid-template-columns: 110px 1fr; gap: 6px 10px; font-size: 14px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; }
+
+  #toast {
+    position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom)); transform: translateX(-50%);
+    background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 12px; font-size: 14px;
+    opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 50; max-width: 90vw;
+  }
+  #toast.show { opacity: 1; }
+  .test-ok { color: var(--ok); }
+  .test-ko { color: var(--danger); }
+</style>
+</head>
+<body>
+
+<header class="app-header">
+  <div class="wrap">
+    <div class="brand"><b>ak.se</b> · Courses &amp; Points WSPL</div>
+    <span class="spacer"></span>
+    <button class="btn icon ghost" data-action="theme" id="themeBtn" aria-label="Changer de thème" title="Thème">◐</button>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" data-action="tab" data-tab="calendar" aria-selected="true">Calendrier</button>
+    <button class="tab" role="tab" data-action="tab" data-tab="sim" aria-selected="false">Simulateur</button>
+    <button class="tab" role="tab" data-action="tab" data-tab="settings" aria-selected="false">Réglages</button>
+  </nav>
+</header>
+
+<main class="wrap">
+  <section id="view-calendar"></section>
+  <section id="view-sim" hidden></section>
+  <section id="view-settings" hidden></section>
+</main>
+
+<dialog class="sheet" id="sheet"><div class="sheet-inner" id="sheetBody"></div></dialog>
+<input type="file" id="importFile" accept="application/json,.json" hidden>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<!-- ==========================================================================
+     1. DATA — calendrier des courses, seuils d'accès, données d'EXEMPLE.
+     Objets JSON purs : remplacer ce bloc suffit pour mettre à jour la saison.
+     ========================================================================== -->
+<script id="wspl-data">
+/*
+ * Modèle d'événement commun (format d'intégration akse-coach) :
+ * {
+ *   id: string,                       // unique, stable
+ *   type: "course" | "stage",
+ *   titre: string,
+ *   debut: "YYYY-MM-DD", fin: "YYYY-MM-DD",   // bornes incluses
+ *   lieu: string, pays: string,       // pays : code FIS à 3 lettres
+ *   disciplines: ["SS"|"BA"|"HP"|"RA"],        // [] = à confirmer
+ *   circuit: "WC"|"EC"|"ECP"|"WCH"|"AUTRE",
+ *   niveauWSPL: "Elite"|"Pro"|"Challenger"|"Amateur"|"Grassroots"|null,
+ *   athletes: string[],               // identifiants d'athlètes
+ *   notes: string,
+ *   aConfirmer?: boolean              // extension optionnelle (calendrier provisoire)
+ * }
+ */
+const WSPL_DATA = {
+  meta: {
+    saison: "2026-27",
+    debutSaison: "2026-10-01",
+    finSaison: "2027-04-30",
+    calendrierAu: "2026-09-25",
+    statut: "Calendrier PROVISOIRE au 25/09/2026 — toutes les courses sont à confirmer."
+  },
+
+  /* ---- Courses (calendrier provisoire, à confirmer) ---- */
+  courses: [
+    // Coupe du Monde FIS — niveau WSPL Elite
+    { id: "c-2026-11-26-innsbruck",    type: "course", titre: "Coupe du Monde · Innsbruck",    debut: "2026-11-26", fin: "2026-11-28", lieu: "Innsbruck",    pays: "AUT", disciplines: ["BA"],       circuit: "WC", niveauWSPL: "Elite", athletes: [], notes: "", aConfirmer: true },
+    { id: "c-2026-12-03-pekin",        type: "course", titre: "Coupe du Monde · Pékin",        debut: "2026-12-03", fin: "2026-12-05", lieu: "Pékin",        pays: "CHN", disciplines: ["BA"],       circuit: "WC", niveauWSPL: "Elite", athletes: [], notes: "", aConfirmer: true },
+    { id: "c-2026-12-09-secretgarden", type: "course", titre: "Coupe du Monde · Secret Garden", debut: "2026-12-09", fin: "2026-12-11", lieu: "Secret Garden", pays: "CHN", disciplines: ["HP"],      circuit: "WC", niveauWSPL: "Elite", athletes: [], notes: "", aConfirmer: true },
+    { id: "c-2026-12-10-breckenridge", type: "course", titre: "Coupe du Monde · Breckenridge", debut: "2026-12-10", fin: "2026-12-13", lieu: "Breckenridge", pays: "USA", disciplines: ["SS"],       circuit: "WC", niveauWSPL: "Elite", athletes: [], notes: "", aConfirmer: true },
+    { id: "c-2026-12-17-copper",       type: "course", titre: "Coupe du Monde · Copper",       debut: "2026-12-17", fin: "2026-12-19", lieu: "Copper",       pays: "USA", disciplines: ["HP"],       circuit: "WC", niveauWSPL: "Elite", athletes: [], notes: "", aConfirmer: true },
+    { id: "c-2027-01-07-kreischberg",  type: "course", titre: "Coupe du Monde · Kreischberg",  debut: "2027-01-07", fin: "2027-01-09", lieu: "Kreischberg",  pays: "AUT", disciplines: ["BA"],       circuit: "WC", niveauWSPL: "Elite", athletes: [], notes: "", aConfirmer: true },
+    { id: "c-2027-01-14-laax",         type: "course", titre: "Coupe du Monde · Laax",         debut: "2027-01-14", fin: "2027-01-16", lieu: "Laax",         pays: "SUI", disciplines: ["SS", "HP"], circuit: "WC", niveauWSPL: "Elite", athletes: [], notes: "", aConfirmer: true },
+    { id: "c-2027-01-20-tignes",       type: "course", titre: "Coupe du Monde · Tignes",       debut: "2027-01-20", fin: "2027-01-21", lieu: "Tignes",       pays: "FRA", disciplines: ["BA"],       circuit: "WC", niveauWSPL: "Elite", athletes: [], notes: "", aConfirmer: true },
+    { id: "c-2027-02-17-calgary",      type: "course", titre: "Coupe du Monde · Calgary",      debut: "2027-02-17", fin: "2027-02-18", lieu: "Calgary",      pays: "CAN", disciplines: ["HP"],       circuit: "WC", niveauWSPL: "Elite", athletes: [], notes: "", aConfirmer: true },
+    { id: "c-2027-02-25-aspen",        type: "course", titre: "Coupe du Monde · Aspen",        debut: "2027-02-25", fin: "2027-02-28", lieu: "Aspen",        pays: "USA", disciplines: ["SS", "HP"], circuit: "WC", niveauWSPL: "Elite", athletes: [], notes: "", aConfirmer: true },
+    { id: "c-2027-04-01-silvaplana",   type: "course", titre: "Coupe du Monde · Silvaplana",   debut: "2027-04-01", fin: "2027-04-04", lieu: "Silvaplana",   pays: "SUI", disciplines: ["SS", "HP"], circuit: "WC", niveauWSPL: "Elite", athletes: [], notes: "", aConfirmer: true },
+
+    // Championnats du Monde — Elite
+    { id: "c-2027-03-06-montafon-wch", type: "course", titre: "Championnats du Monde · Montafon", debut: "2027-03-06", fin: "2027-03-21", lieu: "Montafon", pays: "AUT", disciplines: ["BA", "HP", "SS"], circuit: "WCH", niveauWSPL: "Elite", athletes: [], notes: "", aConfirmer: true },
+
+    // Autre événement Elite
+    { id: "c-2027-03-11-tsl-laax",     type: "course", titre: "The Snow League · Laax",        debut: "2027-03-11", fin: "2027-03-13", lieu: "Laax",         pays: "SUI", disciplines: ["HP"],       circuit: "AUTRE", niveauWSPL: "Elite", athletes: [], notes: "", aConfirmer: true },
+
+    // Coupe d'Europe
+    { id: "c-2026-12-16-schilthorn",   type: "course", titre: "Coupe d'Europe · Schilthorn",   debut: "2026-12-16", fin: "2026-12-17", lieu: "Schilthorn",   pays: "SUI", disciplines: ["BA", "RA"], circuit: "EC",  niveauWSPL: null,         athletes: [], notes: "RA = street. Niveau WSPL non précisé.", aConfirmer: true },
+    { id: "c-2027-01-12-alpedisiusi",  type: "course", titre: "Coupe d'Europe (ECP) · Alpe di Siusi", debut: "2027-01-12", fin: "2027-01-13", lieu: "Alpe di Siusi", pays: "ITA", disciplines: ["SS"], circuit: "ECP", niveauWSPL: null,   athletes: [], notes: "Niveau WSPL non précisé.", aConfirmer: true },
+    { id: "c-2027-01-26-pratonevoso",  type: "course", titre: "Coupe d'Europe · Prato Nevoso", debut: "2027-01-26", fin: "2027-01-27", lieu: "Prato Nevoso", pays: "ITA", disciplines: ["SS"],       circuit: "EC",  niveauWSPL: "Challenger", athletes: [], notes: "", aConfirmer: true },
+    { id: "c-2027-01-30-madonna",      type: "course", titre: "Coupe d'Europe (ECP) · Madonna di Campiglio", debut: "2027-01-30", fin: "2027-01-31", lieu: "Madonna di Campiglio", pays: "ITA", disciplines: ["SS"], circuit: "ECP", niveauWSPL: "Pro", athletes: [], notes: "", aConfirmer: true },
+    { id: "c-2027-02-04-fontromeu",    type: "course", titre: "Coupe d'Europe · Font-Romeu",   debut: "2027-02-04", fin: "2027-02-05", lieu: "Font-Romeu",   pays: "FRA", disciplines: [],           circuit: "EC",  niveauWSPL: null,         athletes: [], notes: "Disciplines à confirmer. Niveau WSPL non précisé.", aConfirmer: true },
+    { id: "c-2027-02-20-kotelnica",    type: "course", titre: "Coupe d'Europe · Kotelnica",    debut: "2027-02-20", fin: "2027-02-21", lieu: "Kotelnica",    pays: "POL", disciplines: ["BA"],       circuit: "EC",  niveauWSPL: "Challenger", athletes: [], notes: "", aConfirmer: true },
+    { id: "c-2027-03-18-stanton",      type: "course", titre: "Coupe d'Europe · St. Anton",    debut: "2027-03-18", fin: "2027-03-19", lieu: "St. Anton",    pays: "AUT", disciplines: ["BA"],       circuit: "EC",  niveauWSPL: "Challenger", athletes: [], notes: "", aConfirmer: true },
+    { id: "c-2027-03-22-laax-ec",      type: "course", titre: "Coupe d'Europe · Laax",         debut: "2027-03-22", fin: "2027-03-23", lieu: "Laax",         pays: "SUI", disciplines: ["HP"],       circuit: "EC",  niveauWSPL: "Challenger", athletes: [], notes: "", aConfirmer: true },
+    { id: "c-2027-03-30-kitzsteinhorn", type: "course", titre: "Coupe d'Europe · Kitzsteinhorn", debut: "2027-03-30", fin: "2027-03-31", lieu: "Kitzsteinhorn", pays: "AUT", disciplines: ["BA"],     circuit: "EC",  niveauWSPL: "Challenger", athletes: [], notes: "", aConfirmer: true },
+    { id: "c-2027-04-08-trysil",       type: "course", titre: "Coupe d'Europe · Trysil",       debut: "2027-04-08", fin: "2027-04-09", lieu: "Trysil",       pays: "NOR", disciplines: ["SS"],       circuit: "EC",  niveauWSPL: "Challenger", athletes: [], notes: "", aConfirmer: true },
+    { id: "c-2027-04-14-corvatsch",    type: "course", titre: "Coupe d'Europe · Corvatsch",    debut: "2027-04-14", fin: "2027-04-18", lieu: "Corvatsch",    pays: "SUI", disciplines: ["BA", "HP", "SS"], circuit: "EC", niveauWSPL: "Pro", athletes: [], notes: "", aConfirmer: true },
+
+    // Coupe d'Europe street (RA)
+    { id: "c-2026-12-05-riga",         type: "course", titre: "Coupe d'Europe Street · Riga",  debut: "2026-12-05", fin: "2026-12-05", lieu: "Riga",         pays: "LAT", disciplines: ["RA"],       circuit: "EC",  niveauWSPL: null,         athletes: [], notes: "Street. Niveau WSPL non précisé.", aConfirmer: true },
+    { id: "c-2026-12-19-lahaye",       type: "course", titre: "Coupe d'Europe Street · La Haye", debut: "2026-12-19", fin: "2026-12-19", lieu: "La Haye",    pays: "NED", disciplines: ["RA"],       circuit: "EC",  niveauWSPL: null,         athletes: [], notes: "Street. Niveau WSPL non précisé.", aConfirmer: true },
+    { id: "c-2027-01-16-tbilissi",     type: "course", titre: "Coupe d'Europe Street · Tbilissi", debut: "2027-01-16", fin: "2027-01-17", lieu: "Tbilissi",  pays: "GEO", disciplines: ["RA"],       circuit: "EC",  niveauWSPL: null,         athletes: [], notes: "Street. Niveau WSPL non précisé.", aConfirmer: true },
+    { id: "c-2027-03-06-szczyrk",      type: "course", titre: "Coupe d'Europe Street · Szczyrk", debut: "2027-03-06", fin: "2027-03-07", lieu: "Szczyrk",   pays: "POL", disciplines: ["RA"],       circuit: "EC",  niveauWSPL: null,         athletes: [], notes: "Street. Niveau WSPL non précisé.", aConfirmer: true }
+  ],
+
+  /* ---- Seuils d'accès FIS 2026/27 en points WSPL (valeurs par défaut) ----
+   * Convention : nombre = minimum WSPL ; 0 = aucun minimum ; null = pas de circuit.
+   */
+  seuils: {
+    SS: { WC: 290,  EC: 75 },
+    BA: { WC: 290,  EC: 75 },
+    HP: { WC: 220,  EC: 0 },
+    RA: { WC: null, EC: 0 }
+  },
+  seuilsFisInfo: "Alternative en points FIS (pour info) — WC : SS 140 H / 120 F, BA 140, HP 70. EC SS/BA : 10 points FIS.",
+
+  /* ---- Données d'EXEMPLE : athlètes et résultats FICTIFS ---- */
+  exemple: {
+    athletes: [
+      { id: "ath-exemple-a", nom: "EXEMPLE · Athlète A", genre: "H", exemple: true },
+      { id: "ath-exemple-b", nom: "EXEMPLE · Athlète B", genre: "F", exemple: true }
+    ],
+    resultats: [
+      { id: "r-ex-a1", athleteId: "ath-exemple-a", discipline: "SS", date: "2025-12-06", course: "EXEMPLE · course fictive 1", place: 8,  F: 30, PL: 500, exemple: true },
+      { id: "r-ex-a2", athleteId: "ath-exemple-a", discipline: "SS", date: "2026-01-24", course: "EXEMPLE · course fictive 2", place: 3,  F: 25, PL: 400, exemple: true },
+      { id: "r-ex-a3", athleteId: "ath-exemple-a", discipline: "SS", date: "2026-03-14", course: "EXEMPLE · course fictive 3", place: 15, F: 40, PL: 900, exemple: true },
+      { id: "r-ex-a4", athleteId: "ath-exemple-a", discipline: "BA", date: "2025-12-13", course: "EXEMPLE · course fictive 4", place: 5,  F: 20, PL: 400, exemple: true },
+      { id: "r-ex-a5", athleteId: "ath-exemple-a", discipline: "BA", date: "2026-02-21", course: "EXEMPLE · course fictive 5", place: 10, F: 35, PL: 500, exemple: true },
+      { id: "r-ex-a6", athleteId: "ath-exemple-a", discipline: "HP", date: "2026-02-07", course: "EXEMPLE · course fictive 6", place: 6,  F: 18, PL: 400, exemple: true },
+      { id: "r-ex-b1", athleteId: "ath-exemple-b", discipline: "HP", date: "2025-11-29", course: "EXEMPLE · course fictive 7", place: 4,  F: 16, PL: 500, exemple: true },
+      { id: "r-ex-b2", athleteId: "ath-exemple-b", discipline: "HP", date: "2026-01-17", course: "EXEMPLE · course fictive 8", place: 7,  F: 20, PL: 900, exemple: true },
+      { id: "r-ex-b3", athleteId: "ath-exemple-b", discipline: "HP", date: "2026-03-07", course: "EXEMPLE · course fictive 9", place: 2,  F: 12, PL: 400, exemple: true },
+      { id: "r-ex-b4", athleteId: "ath-exemple-b", discipline: "SS", date: "2026-02-14", course: "EXEMPLE · course fictive 10", place: 9, F: 22, PL: 500, exemple: true },
+      { id: "r-ex-b5", athleteId: "ath-exemple-b", discipline: "RA", date: "2026-03-21", course: "EXEMPLE · course fictive 11", place: 3, F: 15, PL: 250, exemple: true }
+    ]
+  }
+};
+</script>
+
+<!-- ==========================================================================
+     2. ENGINE — fonctions pures de calcul WSPL. Aucun accès au DOM, aucune
+     date « maintenant » implicite : toute date de référence est un paramètre.
+     ========================================================================== -->
+<script id="wspl-engine">
+const WSPLEngine = (function () {
+  'use strict';
+
+  /* ---------- Constantes réglementaires ---------- */
+  const DISCIPLINES = Object.freeze(['SS', 'BA', 'HP', 'RA']);
+  const DISCIPLINE_LABELS = Object.freeze({ SS: 'Slopestyle', BA: 'Big Air', HP: 'Halfpipe', RA: 'Rail / Street' });
+  const CIRCUITS = Object.freeze(['WC', 'EC', 'ECP', 'WCH', 'AUTRE']);
+  const CIRCUIT_LABELS = Object.freeze({ WC: 'Coupe du Monde', EC: "Coupe d'Europe", ECP: "Coupe d'Europe (ECP)", WCH: 'Championnats du Monde', AUTRE: 'Autre' });
+
+  // Niveaux WSPL : étoiles et fourchette de Points Level (PL).
+  // `defaut` = PL proposé par défaut (Elite 900 = WC, Pro 500 = ECP, Challenger 400 = EC ;
+  // Amateur / Grassroots : milieu de fourchette, hypothèse).
+  const LEVELS = Object.freeze({
+    Grassroots: Object.freeze({ etoiles: 1, min: 100, max: 300,  defaut: 200 }),
+    Amateur:    Object.freeze({ etoiles: 2, min: 100, max: 400,  defaut: 250 }),
+    Challenger: Object.freeze({ etoiles: 3, min: 200, max: 600,  defaut: 400 }),
+    Pro:        Object.freeze({ etoiles: 4, min: 300, max: 800,  defaut: 500 }),
+    Elite:      Object.freeze({ etoiles: 5, min: 600, max: 1000, defaut: 900 })
+  });
+  const LEVEL_NAMES = Object.freeze(Object.keys(LEVELS));
+  // Niveau supposé quand niveauWSPL est null (hypothèse signalée dans l'UI).
+  const CIRCUIT_FALLBACK_LEVEL = Object.freeze({ WC: 'Elite', WCH: 'Elite', ECP: 'Pro', EC: 'Challenger' });
+
+  // Paramètres de la formule de points par place.
+  const FORMULA = Object.freeze({ delta: 0.5, t: 6 });
+  // Fenêtre glissante : 52 semaines = 364 jours.
+  const WINDOW_DAYS = 364;
+  const TOP_N = 3;
+
+  // Table R-Value → PL pour un événement Elite (bornes supérieures exclusives,
+  // chaque palier commençant à +0,01 : ex. H « PL 900 : 6.01–9.3 »).
+  const R_VALUE_TABLE = Object.freeze({
+    H: [[6.01, 1000], [9.31, 900], [16.01, 800], [25.01, 700]],
+    F: [[4.31, 1000], [7.01, 900], [12.01, 800], [19.01, 700]]
+  });
+
+  /* ---------- Utilitaires ---------- */
+  const round2 = (x) => Math.round((x + Number.EPSILON) * 100) / 100;
+  const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+  /** "YYYY-MM-DD" → numéro de jour UTC (entier). */
+  function dayNumber(iso) {
+    if (typeof iso !== 'string' || !ISO_RE.test(iso)) throw new TypeError('Date ISO attendue (YYYY-MM-DD) : ' + iso);
+    const [y, m, d] = iso.split('-').map(Number);
+    return Math.round(Date.UTC(y, m - 1, d) / 86400000);
+  }
+  /** Numéro de jour → "YYYY-MM-DD". */
+  function isoFromDayNumber(n) {
+    return new Date(n * 86400000).toISOString().slice(0, 10);
+  }
+  function addDays(iso, days) { return isoFromDayNumber(dayNumber(iso) + days); }
+  function daysBetween(a, b) { return dayNumber(b) - dayNumber(a); }
+
+  /* ---------- Points par place ---------- */
+  /**
+   * Points WSPL attribués pour la place R parmi F classés (par genre), sur un
+   * événement de niveau PL. Le 1er reçoit exactement PL.
+   *
+   *   P = PL/100 × ( e^((1−R)/t)·Pδ + (101 − (R·100/F − (100/F − 1)))·δ
+   *                  − (e^(−F/t)·Pδ)/F·(R − 1) )
+   *   δ = 0.5, t = 6, Pδ = 100·(1−δ) = 50. Arrondi à 2 décimales.
+   *
+   * ⚠ Le PDF source écrit l'exposant (−R−1)/t : avec cette forme, P(1) ≈ 0,858·PL,
+   *   ce qui contredit la règle « le 1er reçoit PL ». On utilise (1−R)/t, qui
+   *   donne P(1) = PL pour tout F (vérifié par les tests).
+   */
+  function pointsForPlace(R, F, PL, params) {
+    const p = params || FORMULA;
+    if (!Number.isInteger(F) || F < 1) throw new RangeError('F (nombre de classés) doit être un entier ≥ 1');
+    if (!Number.isInteger(R) || R < 1 || R > F) throw new RangeError('La place R doit être un entier entre 1 et F');
+    if (!(typeof PL === 'number' && PL > 0)) throw new RangeError('PL doit être un nombre > 0');
+    const d = p.delta, t = p.t, Pd = 100 * (1 - d);
+    const raw = (PL / 100) * (
+      Math.exp((1 - R) / t) * Pd +
+      (101 - (R * 100 / F - (100 / F - 1))) * d -
+      (Math.exp(-F / t) * Pd) / F * (R - 1)
+    );
+    return round2(raw);
+  }
+
+  /** Variante non levée d'exception : null si données invalides. */
+  function safePoints(r) {
+    try { return pointsForPlace(Number(r.place), Number(r.F), Number(r.PL)); } catch (e) { return null; }
+  }
+
+  /** Barème complet d'un événement (utile pour affichage / export). */
+  function pointsTable(F, PL) {
+    const out = [];
+    for (let R = 1; R <= F; R++) out.push({ place: R, points: pointsForPlace(R, F, PL) });
+    return out;
+  }
+
+  /* ---------- Niveaux & Points Level ---------- */
+  /** Niveau effectif d'un événement : niveauWSPL, sinon hypothèse selon le circuit. */
+  function levelForEvent(ev) {
+    if (ev && ev.niveauWSPL && LEVELS[ev.niveauWSPL]) return { niveau: ev.niveauWSPL, hypothese: false };
+    const fb = ev && CIRCUIT_FALLBACK_LEVEL[ev.circuit];
+    return fb ? { niveau: fb, hypothese: true } : { niveau: null, hypothese: true };
+  }
+  /** Fourchette de PL d'un niveau (toute la plage 100–1000 si inconnu). */
+  function plRange(niveau) {
+    const L = LEVELS[niveau];
+    return L ? { min: L.min, max: L.max } : { min: 100, max: 1000 };
+  }
+  /** PL par défaut d'un événement : WC/WCH = 900, ECP/Pro = 500, EC Challenger = 400. */
+  function defaultPL(ev) {
+    const lv = levelForEvent(ev);
+    if (lv.niveau) return { PL: LEVELS[lv.niveau].defaut, niveau: lv.niveau, hypothese: lv.hypothese, ...plRange(lv.niveau) };
+    return { PL: 400, niveau: null, hypothese: true, min: 100, max: 1000 };
+  }
+  function clampPL(PL, niveau) {
+    const r = plRange(niveau);
+    return Math.min(r.max, Math.max(r.min, PL));
+  }
+
+  /**
+   * PL d'un événement Elite à partir de la R-Value (classement WSPL moyen du
+   * top 8 hommes / top 5 femmes présents). Au-delà de 25 (H) / 19 (F), la
+   * P-Value s'applique (non modélisée) → PL null.
+   */
+  function plFromRValue(rValue, genre) {
+    const table = R_VALUE_TABLE[genre];
+    if (!table) throw new RangeError('Genre attendu : "H" ou "F"');
+    if (!(typeof rValue === 'number' && rValue > 0)) throw new RangeError('R-Value doit être un nombre > 0');
+    for (const [borneExclue, PL] of table) {
+      if (rValue < borneExclue) return { PL, methode: 'R-Value' };
+    }
+    return { PL: null, methode: 'P-Value', message: 'R-Value trop élevée : le PL se calcule avec la P-Value (non modélisée ici).' };
+  }
+
+  /* ---------- Fenêtre 52 semaines & score ---------- */
+  /**
+   * Un résultat compte à la date de référence s'il est dans ]ref − 364 j ; ref].
+   * Un résultat daté exactement de ref − 364 j (même jour de la semaine,
+   * 52 semaines avant) est sorti de la fenêtre.
+   */
+  function inWindow(dateResultat, refDate) {
+    const d = dayNumber(dateResultat), r = dayNumber(refDate);
+    return d <= r && d > r - WINDOW_DAYS;
+  }
+  /** Date à laquelle un résultat sort de la fenêtre (premier jour où il ne compte plus). */
+  function expiryDate(dateResultat) { return addDays(dateResultat, WINDOW_DAYS); }
+
+  /**
+   * Score WSPL d'un athlète dans UNE discipline à une date de référence :
+   * moyenne des 3 meilleurs résultats valides dans la fenêtre.
+   * options.padToThree (défaut true) : s'il y a moins de 3 résultats, on divise
+   * quand même par 3 (résultats manquants = 0) — hypothèse réglementaire.
+   */
+  function disciplineScore(results, discipline, refDate, options) {
+    const pad = !options || options.padToThree !== false;
+    const scoped = (results || []).filter((r) => r.discipline === discipline);
+    const valid = [], invalid = [], horsFenetre = [];
+    for (const r of scoped) {
+      const points = safePoints(r);
+      const withPts = Object.assign({}, r, { points });
+      if (points === null) invalid.push(withPts);
+      else if (inWindow(r.date, refDate)) valid.push(withPts);
+      else horsFenetre.push(withPts);
+    }
+    valid.sort((a, b) => b.points - a.points || (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+    const top = valid.slice(0, TOP_N);
+    const sum = top.reduce((s, r) => s + r.points, 0);
+    const divisor = pad ? TOP_N : Math.max(top.length, 1);
+    return {
+      discipline, refDate,
+      score: top.length ? round2(sum / divisor) : 0,
+      top, retenus: valid, horsFenetre, invalides: invalid,
+      manquants: Math.max(0, TOP_N - top.length),
+      complete: pad && top.length < TOP_N   // true = moyenne complétée par des 0
+    };
+  }
+
+  /* ---------- Seuils ---------- */
+  /**
+   * Statut par rapport aux seuils d'une discipline.
+   * th = { WC: nombre|null, EC: nombre|null } ; null = pas de circuit, 0 = aucun minimum.
+   */
+  function thresholdStatus(score, th) {
+    const one = (min) => {
+      if (min === null || min === undefined) return { existe: false, min: null, ok: false, manque: null };
+      return { existe: true, min, ok: score >= min, manque: round2(Math.max(0, min - score)) };
+    };
+    const wc = one(th ? th.WC : null), ec = one(th ? th.EC : null);
+    let niveau = 'aucun', label;
+    if (wc.existe && wc.ok) { niveau = 'WC'; label = 'Accès WC ✓'; }
+    else if (ec.existe && ec.ok) {
+      niveau = 'EC';
+      label = 'Accès EC ✓' + (wc.existe ? ' · manque ' + fmtPts(wc.manque) + ' pts pour la WC' : '');
+    }
+    else if (ec.existe) label = 'Manque ' + fmtPts(ec.manque) + ' pts pour la EC';
+    else if (wc.existe) label = 'Manque ' + fmtPts(wc.manque) + ' pts pour la WC';
+    else label = 'Aucun seuil défini';
+    return { wc, ec, niveau, label };
+  }
+  function fmtPts(x) { return (Math.round(x * 100) / 100).toLocaleString('fr-FR', { maximumFractionDigits: 2 }); }
+
+  /* ---------- « Et si ? » ---------- */
+  /**
+   * Ajoute un résultat hypothétique et compare le score AVANT / APRÈS à la date
+   * de l'hypothèse (la fenêtre 52 semaines est donc évaluée à cette date).
+   * hypo = { date, place, F, PL, course? }
+   */
+  function whatIf(results, hypo, discipline, options) {
+    const opts = options || {};
+    const ref = hypo.date;
+    const h = Object.assign({ id: '__hypothese__', course: 'Hypothèse' }, hypo, { discipline, hypothetique: true });
+    const points = pointsForPlace(Number(h.place), Number(h.F), Number(h.PL));
+    const before = disciplineScore(results, discipline, ref, opts);
+    const after = disciplineScore((results || []).concat([h]), discipline, ref, opts);
+    const th = opts.thresholds ? opts.thresholds[discipline] : null;
+    const franchissements = [];
+    if (th) {
+      for (const k of ['EC', 'WC']) {
+        const min = th[k];
+        if (typeof min === 'number' && min > 0 && before.score < min && after.score >= min) franchissements.push({ seuil: k, min });
+      }
+    }
+    return {
+      refDate: ref, points, before, after,
+      delta: round2(after.score - before.score),
+      dansTop3: after.top.some((r) => r.id === h.id),
+      franchissements,
+      statutAvant: th ? thresholdStatus(before.score, th) : null,
+      statutApres: th ? thresholdStatus(after.score, th) : null
+    };
+  }
+
+  /* ---------- Calcul inverse ---------- */
+  /**
+   * Place minimale (la moins bonne place suffisante, donc le plus grand R) à
+   * obtenir sur une course { date, F, PL } pour atteindre `target` dans la
+   * discipline. Recherche sur R = 1..F (le score est non croissant en R).
+   */
+  function minPlaceForTarget(results, course, discipline, target, options) {
+    const F = Number(course.F), PL = Number(course.PL);
+    const before = disciplineScore(results, discipline, course.date, options);
+    if (before.score >= target) return { dejaAtteint: true, atteignable: true, place: F, scoreAvant: before.score };
+    let best = null, scoreEnPremier = null;
+    for (let R = 1; R <= F; R++) {
+      const w = whatIf(results, { date: course.date, place: R, F, PL, course: course.course }, discipline, options);
+      if (R === 1) scoreEnPremier = w.after.score;
+      if (w.after.score >= target) best = { place: R, points: w.points, score: w.after.score };
+      else break;
+    }
+    if (!best) return { dejaAtteint: false, atteignable: false, place: null, scoreAvant: before.score, scoreEnPremier };
+    return Object.assign({ dejaAtteint: false, atteignable: true, scoreAvant: before.score }, best);
+  }
+
+  /* ---------- Expiration ---------- */
+  /**
+   * Résultats qui comptent à `fromDate` mais sortent de la fenêtre avant
+   * `targetDate` (ex. date d'inscription d'une WC), et effet sur le score.
+   */
+  function expiringResults(results, discipline, fromDate, targetDate, options) {
+    const at = disciplineScore(results, discipline, fromDate, options);
+    const later = disciplineScore(results, discipline, targetDate, options);
+    const topIds = new Set(at.top.map((r) => r.id));
+    const expiring = at.retenus
+      .filter((r) => !inWindow(r.date, targetDate))
+      .map((r) => Object.assign({}, r, { sortLe: expiryDate(r.date), dansTop3: topIds.has(r.id) }))
+      .sort((a, b) => (a.sortLe < b.sortLe ? -1 : 1));
+    return { fromDate, targetDate, expiring, scoreAvant: at.score, scoreCible: later.score, delta: round2(later.score - at.score), topCible: later.top };
+  }
+
+  /* ---------- Comparatif des 4 disciplines ---------- */
+  function compareDisciplines(results, refDate, thresholds, options) {
+    return DISCIPLINES.map((d) => {
+      const s = disciplineScore(results, d, refDate, options);
+      const st = thresholdStatus(s.score, thresholds ? thresholds[d] : null);
+      // Écart au prochain seuil non atteint (pour repérer la discipline la plus proche).
+      const prochain = !st.ec.ok && st.ec.existe ? { seuil: 'EC', manque: st.ec.manque }
+        : !st.wc.ok && st.wc.existe ? { seuil: 'WC', manque: st.wc.manque } : null;
+      return { discipline: d, score: s.score, nbResultats: s.retenus.length, complete: s.complete, top: s.top, statut: st, prochain };
+    });
+  }
+
+  /* ---------- Événements : validation, chevauchements, export ---------- */
+  function validateEvent(ev) {
+    const errors = [];
+    if (!ev || typeof ev !== 'object') return ['Événement invalide'];
+    if (!ev.id) errors.push('id manquant');
+    if (ev.type !== 'course' && ev.type !== 'stage') errors.push('type doit être "course" ou "stage"');
+    if (!ev.titre) errors.push('titre manquant');
+    if (!ISO_RE.test(ev.debut || '')) errors.push('debut invalide');
+    if (!ISO_RE.test(ev.fin || '')) errors.push('fin invalide');
+    if (ISO_RE.test(ev.debut || '') && ISO_RE.test(ev.fin || '') && ev.fin < ev.debut) errors.push('fin avant debut');
+    if (ev.disciplines && !Array.isArray(ev.disciplines)) errors.push('disciplines doit être un tableau');
+    else if ((ev.disciplines || []).some((d) => !DISCIPLINES.includes(d))) errors.push('discipline inconnue');
+    if (ev.circuit && !CIRCUITS.includes(ev.circuit)) errors.push('circuit inconnu');
+    if (ev.niveauWSPL != null && !LEVELS[ev.niveauWSPL]) errors.push('niveauWSPL inconnu');
+    return errors;
+  }
+  /** Complète un événement avec les valeurs par défaut du modèle commun. */
+  function normalizeEvent(ev) {
+    return {
+      id: String(ev.id), type: ev.type, titre: String(ev.titre || ''),
+      debut: ev.debut, fin: ev.fin || ev.debut,
+      lieu: ev.lieu || '', pays: ev.pays || '',
+      disciplines: Array.isArray(ev.disciplines) ? ev.disciplines.slice() : [],
+      circuit: ev.circuit || 'AUTRE',
+      niveauWSPL: ev.niveauWSPL != null ? ev.niveauWSPL : null,
+      athletes: Array.isArray(ev.athletes) ? ev.athletes.slice() : [],
+      notes: ev.notes || '',
+      ...(ev.aConfirmer ? { aConfirmer: true } : {})
+    };
+  }
+  const rangesOverlap = (a, b) => a.debut <= b.fin && b.debut <= a.fin;
+  function eventOnDay(ev, iso) { return ev.debut <= iso && iso <= ev.fin; }
+
+  /** Chevauchements stage ↔ course : { [id]: [ids en conflit] }. */
+  function detectOverlaps(events) {
+    const stages = events.filter((e) => e.type === 'stage');
+    const courses = events.filter((e) => e.type === 'course');
+    const map = {};
+    for (const s of stages) for (const c of courses) {
+      if (rangesOverlap(s, c)) {
+        (map[s.id] = map[s.id] || []).push(c.id);
+        (map[c.id] = map[c.id] || []).push(s.id);
+      }
+    }
+    return map;
+  }
+
+  /** Export iCalendar (.ics). `now` = horodatage ISO fourni par l'appelant. */
+  function toICS(events, opts) {
+    const o = opts || {};
+    const stamp = String(o.now || '1970-01-01T00:00:00Z').replace(/[-:]/g, '').replace(/\.\d+/, '').slice(0, 15) + 'Z';
+    const esc = (s) => String(s || '').replace(/\\/g, '\\\\').replace(/\r?\n/g, '\\n').replace(/,/g, '\\,').replace(/;/g, '\\;');
+    const fold = (line) => {
+      const parts = [];
+      let rest = line;
+      while (rest.length > 73) { parts.push(rest.slice(0, 73)); rest = ' ' + rest.slice(73); }
+      parts.push(rest);
+      return parts.join('\r\n');
+    };
+    const d = (iso) => iso.replace(/-/g, '');
+    const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ak.se//akse-coach courses-wspl//FR', 'CALSCALE:GREGORIAN',
+      'X-WR-CALNAME:' + esc(o.calName || 'Courses & stages')];
+    for (const ev of events) {
+      const desc = [
+        ev.type === 'course' ? 'Course' : 'Stage',
+        ev.circuit ? CIRCUIT_LABELS[ev.circuit] || ev.circuit : '',
+        ev.disciplines && ev.disciplines.length ? 'Disciplines : ' + ev.disciplines.join(', ') : '',
+        ev.niveauWSPL ? 'Niveau WSPL : ' + ev.niveauWSPL : '',
+        ev.aConfirmer ? 'À CONFIRMER' : '',
+        ev.notes || ''
+      ].filter(Boolean).join('\n');
+      lines.push('BEGIN:VEVENT', 'UID:' + esc(ev.id) + '@akse-coach', 'DTSTAMP:' + stamp,
+        'DTSTART;VALUE=DATE:' + d(ev.debut), 'DTEND;VALUE=DATE:' + d(addDays(ev.fin, 1)), // DTEND exclusif
+        'SUMMARY:' + esc((ev.aConfirmer ? '[à confirmer] ' : '') + ev.titre),
+        'LOCATION:' + esc([ev.lieu, ev.pays].filter(Boolean).join(', ')),
+        'DESCRIPTION:' + esc(desc),
+        'CATEGORIES:' + (ev.type === 'course' ? 'COURSE' : 'STAGE'),
+        'END:VEVENT');
+    }
+    lines.push('END:VCALENDAR');
+    return lines.map(fold).join('\r\n') + '\r\n';
+  }
+
+  return Object.freeze({
+    // constantes
+    DISCIPLINES, DISCIPLINE_LABELS, CIRCUITS, CIRCUIT_LABELS, LEVELS, LEVEL_NAMES, FORMULA, WINDOW_DAYS, TOP_N,
+    // dates
+    dayNumber, addDays, daysBetween, inWindow, expiryDate,
+    // points
+    round2, pointsForPlace, pointsTable, levelForEvent, plRange, defaultPL, clampPL, plFromRValue,
+    // score & simulation
+    disciplineScore, thresholdStatus, whatIf, minPlaceForTarget, expiringResults, compareDisciplines, fmtPts,
+    // événements
+    validateEvent, normalizeEvent, detectOverlaps, eventOnDay, rangesOverlap, toICS
+  });
+})();
+if (typeof globalThis !== 'undefined') globalThis.WSPLEngine = WSPLEngine;
+</script>
+
+<!-- ==========================================================================
+     TESTS de l'ENGINE — petit harnais sans dépendance.
+     Résultats : console + section « Tests ENGINE » des Réglages.
+     ========================================================================== -->
+<script id="wspl-tests">
+(function () {
+  const E = globalThis.WSPLEngine;
+  const results = [];
+  const test = (name, fn) => {
+    try { fn(); results.push({ name, ok: true }); }
+    catch (e) { results.push({ name, ok: false, error: e && e.message ? e.message : String(e) }); }
+  };
+  const assert = (cond, msg) => { if (!cond) throw new Error(msg || 'assertion échouée'); };
+  const eq = (a, b, msg) => assert(a === b, (msg || '') + ' attendu ' + b + ', obtenu ' + a);
+
+  // Formule — règle « le 1er reçoit exactement PL » (exposant corrigé (1−R)/t).
+  test('P(1, F) === PL pour F = 5, 20, 40', () => {
+    for (const F of [5, 20, 40]) for (const PL of [900, 500, 400, 1000]) eq(E.pointsForPlace(1, F, PL), PL, 'F=' + F + ' PL=' + PL);
+  });
+  test('Forme du PDF (−R−1)/t : P(1) ≠ PL (justifie la correction)', () => {
+    const d = 0.5, t = 6, Pd = 50, F = 20, PL = 900, R = 1;
+    const pdf = PL / 100 * (Math.exp((-R - 1) / t) * Pd + (101 - (R * 100 / F - (100 / F - 1))) * d - (Math.exp(-F / t) * Pd) / F * (R - 1));
+    assert(Math.abs(pdf - PL) > 1, 'la forme PDF devrait différer de PL');
+  });
+  test('P strictement décroissante avec R et positive', () => {
+    for (const F of [5, 20, 40]) {
+      let prev = Infinity;
+      for (let R = 1; R <= F; R++) {
+        const p = E.pointsForPlace(R, F, 900);
+        assert(p < prev, 'F=' + F + ' R=' + R); assert(p > 0, 'positif F=' + F + ' R=' + R); prev = p;
+      }
+    }
+  });
+  test('P : entrées invalides rejetées', () => {
+    let n = 0;
+    for (const args of [[0, 10, 500], [11, 10, 500], [1, 0, 500], [1, 10, 0], [1.5, 10, 500]]) {
+      try { E.pointsForPlace(...args); } catch (e) { n++; }
+    }
+    eq(n, 5);
+  });
+  // Moyenne top 3.
+  const r = (id, date, place, F, PL, discipline = 'SS') => ({ id, date, place, F, PL, discipline });
+  test('Moyenne des 3 meilleurs résultats', () => {
+    const res = [r('a', '2026-01-01', 1, 10, 500), r('b', '2026-02-01', 1, 10, 400), r('c', '2026-03-01', 1, 10, 300), r('d', '2026-03-02', 1, 10, 200)];
+    const s = E.disciplineScore(res, 'SS', '2026-06-01');
+    eq(s.score, 400); eq(s.top.length, 3); eq(s.top[2].id, 'c');
+  });
+  test('Moins de 3 résultats : complétion par 0 (réglable)', () => {
+    const res = [r('a', '2026-01-01', 1, 10, 600)];
+    eq(E.disciplineScore(res, 'SS', '2026-06-01').score, 200);
+    eq(E.disciplineScore(res, 'SS', '2026-06-01', { padToThree: false }).score, 600);
+    assert(E.disciplineScore(res, 'SS', '2026-06-01').complete === true);
+  });
+  test('Disciplines calculées séparément', () => {
+    const res = [r('a', '2026-01-01', 1, 10, 900, 'SS'), r('b', '2026-01-01', 1, 10, 900, 'BA')];
+    eq(E.disciplineScore(res, 'SS', '2026-06-01').score, 300);
+    eq(E.disciplineScore(res, 'HP', '2026-06-01').score, 0);
+  });
+  // Fenêtre 52 semaines.
+  test('Fenêtre 52 semaines : ]ref − 364 j ; ref]', () => {
+    const ref = '2027-01-10';
+    assert(E.inWindow(E.addDays(ref, -363), ref), 'J-363 compte');
+    assert(!E.inWindow(E.addDays(ref, -364), ref), 'J-364 sort');
+    assert(E.inWindow(ref, ref), 'J compte');
+    assert(!E.inWindow(E.addDays(ref, 1), ref), 'futur exclu');
+    eq(E.expiryDate('2025-12-06'), '2026-12-05');
+  });
+  test('Score : résultat expiré exclu', () => {
+    const res = [r('a', '2025-12-06', 1, 10, 900), r('b', '2026-06-01', 1, 10, 300)];
+    eq(E.disciplineScore(res, 'SS', '2026-12-04').score, 400);
+    eq(E.disciplineScore(res, 'SS', '2026-12-05').score, 100);
+  });
+  test('Expiration : résultats sortants et effet sur le score', () => {
+    const res = [r('a', '2025-12-06', 1, 10, 900), r('b', '2026-06-01', 1, 10, 300)];
+    const x = E.expiringResults(res, 'SS', '2026-09-25', '2026-12-10');
+    eq(x.expiring.length, 1); eq(x.expiring[0].id, 'a'); eq(x.delta, -300);
+  });
+  // Et si ? & calcul inverse.
+  test('Et si ? : nouveau top 3 et franchissement de seuil', () => {
+    const res = [r('a', '2026-01-01', 1, 10, 300)];
+    const w = E.whatIf(res, { date: '2026-12-13', place: 1, F: 30, PL: 900 }, 'SS', { thresholds: { SS: { WC: 290, EC: 75 } } });
+    eq(w.before.score, 100); eq(w.after.score, 400); eq(w.delta, 300); assert(w.dansTop3);
+    eq(w.franchissements.map((f) => f.seuil).join(','), 'WC');
+  });
+  test('Calcul inverse : plus grande place suffisante', () => {
+    const res = [r('a', '2026-01-01', 1, 10, 400), r('b', '2026-02-01', 1, 10, 300)];
+    const course = { date: '2026-12-13', F: 40, PL: 900 };
+    const x = E.minPlaceForTarget(res, course, 'SS', 290);
+    assert(x.atteignable && !x.dejaAtteint, 'atteignable');
+    const ok = E.whatIf(res, { date: course.date, place: x.place, F: 40, PL: 900 }, 'SS').after.score;
+    assert(ok >= 290, 'la place trouvée suffit');
+    if (x.place < 40) {
+      const ko = E.whatIf(res, { date: course.date, place: x.place + 1, F: 40, PL: 900 }, 'SS').after.score;
+      assert(ko < 290, 'la place suivante ne suffit pas');
+    }
+  });
+  test('Calcul inverse : inatteignable / déjà atteint', () => {
+    eq(E.minPlaceForTarget([], { date: '2026-12-13', F: 20, PL: 400 }, 'SS', 290).atteignable, false);
+    const res = [r('a', '2026-01-01', 1, 10, 900), r('b', '2026-02-01', 1, 10, 900), r('c', '2026-03-01', 1, 10, 900)];
+    eq(E.minPlaceForTarget(res, { date: '2026-12-13', F: 20, PL: 400 }, 'SS', 290).dejaAtteint, true);
+  });
+  // Seuils & PL.
+  test('Statut de seuils (0 = aucun minimum, null = pas de circuit)', () => {
+    eq(E.thresholdStatus(300, { WC: 290, EC: 75 }).niveau, 'WC');
+    eq(E.thresholdStatus(100, { WC: 290, EC: 75 }).niveau, 'EC');
+    eq(E.thresholdStatus(50, { WC: 290, EC: 75 }).ec.manque, 25);
+    eq(E.thresholdStatus(0, { WC: 220, EC: 0 }).niveau, 'EC');
+    eq(E.thresholdStatus(500, { WC: null, EC: 0 }).wc.existe, false);
+  });
+  test('PL Elite depuis la R-Value (bornes)', () => {
+    eq(E.plFromRValue(4.5, 'H').PL, 1000); eq(E.plFromRValue(6, 'H').PL, 1000); eq(E.plFromRValue(6.01, 'H').PL, 900);
+    eq(E.plFromRValue(16, 'H').PL, 800); eq(E.plFromRValue(25, 'H').PL, 700); eq(E.plFromRValue(25.01, 'H').PL, null);
+    eq(E.plFromRValue(4.3, 'F').PL, 1000); eq(E.plFromRValue(7, 'F').PL, 900); eq(E.plFromRValue(19, 'F').PL, 700); eq(E.plFromRValue(19.5, 'F').PL, null);
+  });
+  test('PL par défaut : WC 900, ECP 500, EC Challenger 400', () => {
+    eq(E.defaultPL({ circuit: 'WC', niveauWSPL: 'Elite' }).PL, 900);
+    eq(E.defaultPL({ circuit: 'ECP', niveauWSPL: null }).PL, 500);
+    eq(E.defaultPL({ circuit: 'EC', niveauWSPL: 'Challenger' }).PL, 400);
+    assert(E.defaultPL({ circuit: 'EC', niveauWSPL: null }).hypothese, 'niveau supposé signalé');
+  });
+  // Événements.
+  test('Chevauchements stage ↔ course', () => {
+    const evs = [
+      { id: 's1', type: 'stage', debut: '2026-12-08', fin: '2026-12-10' },
+      { id: 'c1', type: 'course', debut: '2026-12-10', fin: '2026-12-13' },
+      { id: 'c2', type: 'course', debut: '2026-12-11', fin: '2026-12-12' },
+      { id: 's2', type: 'stage', debut: '2026-12-01', fin: '2026-12-02' }
+    ];
+    const m = E.detectOverlaps(evs);
+    eq((m.s1 || []).join(), 'c1'); eq((m.c1 || []).join(), 's1'); assert(!m.c2 && !m.s2);
+  });
+  test('Export .ics : DTEND exclusif et échappement', () => {
+    const ics = E.toICS([{ id: 'x', type: 'course', titre: 'A, B; C', debut: '2026-12-10', fin: '2026-12-13', lieu: 'Laax', pays: 'SUI', disciplines: ['SS'], circuit: 'WC' }], { now: '2026-09-25T10:00:00Z' });
+    assert(ics.includes('DTEND;VALUE=DATE:20261214'), 'DTEND'); assert(ics.includes('SUMMARY:A\\, B\\; C'), 'échappement');
+    assert(ics.includes('DTSTAMP:20260925T100000Z'), 'DTSTAMP');
+  });
+  test('Validation du modèle d\'événement', () => {
+    eq(E.validateEvent({ id: 'x', type: 'stage', titre: 't', debut: '2026-12-10', fin: '2026-12-09' }).includes('fin avant debut'), true);
+    eq(E.validateEvent({ id: 'x', type: 'stage', titre: 't', debut: '2026-12-10', fin: '2026-12-10', disciplines: ['SS'] }).length, 0);
+  });
+
+  const ko = results.filter((t) => !t.ok);
+  globalThis.__WSPL_TESTS__ = { results, passed: results.length - ko.length, failed: ko.length };
+  if (typeof console !== 'undefined') {
+    if (ko.length) console.error('[WSPL] Tests ENGINE : ' + ko.length + ' échec(s)', ko);
+    else console.info('[WSPL] Tests ENGINE : ' + results.length + '/' + results.length + ' OK');
+  }
+})();
+</script>
+
+<!-- ==========================================================================
+     3. UI — calendrier (mois / liste), stages, simulateur, réglages.
+     Découpage prévu pour akse-coach : store (persistance), selectors,
+     renderCalendar / renderSim / renderSettings, sheets (modales), actions.
+     ========================================================================== -->
+<script id="wspl-ui">
+(function () {
+  'use strict';
+  const E = globalThis.WSPLEngine;
+  const DATA = WSPL_DATA;
+
+  /* ======================= Persistance (localStorage) ======================= */
+  const PREFIX = 'akse.coursesWspl.v1.';
+  const store = {
+    get(key, fallback) {
+      try { const raw = localStorage.getItem(PREFIX + key); return raw === null ? fallback : JSON.parse(raw); }
+      catch (e) { return fallback; }
+    },
+    set(key, value) {
+      try { localStorage.setItem(PREFIX + key, JSON.stringify(value)); return true; }
+      catch (e) { return false; }
+    },
+    remove(key) { try { localStorage.removeItem(PREFIX + key); } catch (e) { /* stockage indisponible */ } }
+  };
+  const clone = (x) => JSON.parse(JSON.stringify(x));
+
+  /* ======================= État ======================= */
+  const todayISO = () => {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  };
+  const TODAY = todayISO();
+
+  const state = {
+    // courses : null = calendrier DATA ; tableau = calendrier importé / modifié.
+    courses: store.get('courses', null),
+    stages: store.get('stages', []),
+    athletes: store.get('athletes', clone(DATA.exemple.athletes)),
+    results: store.get('results', clone(DATA.exemple.resultats)),
+    settings: Object.assign({ thresholds: clone(DATA.seuils), padToThree: true }, store.get('settings', {})),
+    theme: store.get('theme', 'auto')
+  };
+  const ui = {
+    tab: 'calendar',
+    calView: 'mois',
+    month: null,
+    selectedDay: null,
+    filters: { disciplines: [], circuit: 'TOUS', type: 'TOUS' },
+    sim: {
+      athleteId: null, discipline: 'SS', refDate: TODAY,
+      ctx: { courseId: '', date: TODAY, niveau: 'Elite', F: 30, PL: 900, place: 10, rValue: '', target: 'WC', custom: 150 },
+      expTarget: null
+    }
+  };
+  const save = {
+    courses: () => store.set('courses', state.courses),
+    stages: () => store.set('stages', state.stages),
+    athletes: () => store.set('athletes', state.athletes),
+    results: () => store.set('results', state.results),
+    settings: () => store.set('settings', state.settings),
+    theme: () => store.set('theme', state.theme)
+  };
+
+  /* ======================= Sélecteurs ======================= */
+  const courses = () => (state.courses || DATA.courses);
+  const allEvents = () => courses().concat(state.stages).slice().sort((a, b) => a.debut < b.debut ? -1 : a.debut > b.debut ? 1 : a.titre.localeCompare(b.titre));
+  const eventById = (id) => allEvents().find((e) => e.id === id);
+  const athlete = () => state.athletes.find((a) => a.id === ui.sim.athleteId) || state.athletes[0] || null;
+  const athleteResults = () => { const a = athlete(); return a ? state.results.filter((r) => r.athleteId === a.id) : []; };
+  const engineOpts = () => ({ padToThree: state.settings.padToThree, thresholds: state.settings.thresholds });
+
+  /** Filtres : discipline (un événement sans discipline connue reste visible),
+   *  circuit (s'applique aux courses uniquement), type. */
+  function filteredEvents() {
+    const f = ui.filters;
+    return allEvents().filter((e) => {
+      if (f.type !== 'TOUS' && e.type !== f.type) return false;
+      if (f.circuit !== 'TOUS' && e.type === 'course' && e.circuit !== f.circuit) return false;
+      if (f.disciplines.length && (e.disciplines || []).length && !e.disciplines.some((d) => f.disciplines.includes(d))) return false;
+      return true;
+    });
+  }
+
+  /* ======================= Utilitaires d'affichage ======================= */
+  const $ = (sel, root) => (root || document).querySelector(sel);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const MOIS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+  const MOIS_C = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+  const parts = (iso) => iso.split('-').map(Number);
+  function fmtDate(iso) { const [y, m, d] = parts(iso); return d + ' ' + MOIS_C[m - 1] + ' ' + y; }
+  function fmtRange(a, b) {
+    if (a === b) return fmtDate(a);
+    const [ya, ma, da] = parts(a), [yb, mb, db] = parts(b);
+    if (ya === yb && ma === mb) return da + '–' + db + ' ' + MOIS_C[ma - 1] + ' ' + ya;
+    if (ya === yb) return da + ' ' + MOIS_C[ma - 1] + ' – ' + db + ' ' + MOIS_C[mb - 1] + ' ' + ya;
+    return fmtDate(a) + ' – ' + fmtDate(b);
+  }
+  const pts = (x) => E.fmtPts(x);
+  const stars = (niveau) => niveau && E.LEVELS[niveau] ? '<span class="stars" title="' + esc(niveau) + '">' + '★'.repeat(E.LEVELS[niveau].etoiles) + '</span>' : '';
+  const discChips = (ds) => (ds && ds.length ? ds.map((d) => '<span class="chip">' + d + '</span>').join('') : '<span class="chip tbc">disc. à confirmer</span>');
+  const uid = (p) => p + '-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+  function toast(msg) {
+    const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+    clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 2400);
+  }
+  function download(filename, content, mime) {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  /* ======================= Thème ======================= */
+  function applyTheme() {
+    const root = document.documentElement;
+    if (state.theme === 'auto') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', state.theme);
+    const btn = $('#themeBtn');
+    btn.textContent = state.theme === 'auto' ? '◐' : state.theme === 'dark' ? '☾' : '☀';
+    btn.title = 'Thème : ' + (state.theme === 'auto' ? 'automatique' : state.theme === 'dark' ? 'sombre' : 'clair');
+  }
+
+  /* =================================================================
+     CALENDRIER
+     ================================================================= */
+  const seasonMonths = (() => {
+    const out = []; let [y, m] = parts(DATA.meta.debutSaison); const [ye, me] = parts(DATA.meta.finSaison);
+    while (y < ye || (y === ye && m <= me)) { out.push(y + '-' + String(m).padStart(2, '0')); m++; if (m > 12) { m = 1; y++; } }
+    return out;
+  })();
+  ui.month = seasonMonths.find((mm) => mm >= TODAY.slice(0, 7)) || seasonMonths[0];
+
+  function eventCard(e, overlaps) {
+    const conflict = overlaps[e.id];
+    const lv = e.type === 'course' ? E.levelForEvent(e) : null;
+    return '<button class="ev ' + e.type + '" data-action="open-event" data-id="' + esc(e.id) + '">' +
+      '<span class="stripe"></span><span style="flex:1;min-width:0">' +
+      '<span class="date">' + fmtRange(e.debut, e.fin) + '</span>' +
+      '<div class="title">' + esc(e.titre) + '</div>' +
+      '<div class="small muted">' + esc([e.lieu, e.pays].filter(Boolean).join(' · ')) + '</div>' +
+      '<div class="meta">' +
+        (e.type === 'stage' ? '<span class="chip stage">Stage</span>' : '<span class="chip gold">' + esc(e.circuit) + '</span>') +
+        discChips(e.disciplines) +
+        (lv && e.niveauWSPL ? '<span class="chip">' + stars(e.niveauWSPL) + ' ' + esc(e.niveauWSPL) + '</span>' : '') +
+        (e.aConfirmer ? '<span class="chip tbc">à confirmer</span>' : '') +
+        (conflict ? '<span class="chip warn">⚠ chevauchement (' + conflict.length + ')</span>' : '') +
+      '</div></span></button>';
+  }
+
+  function renderFilters() {
+    const f = ui.filters;
+    return '<div class="card filters">' +
+      '<div class="row">' + E.DISCIPLINES.map((d) =>
+        '<button class="chip" data-action="filter-disc" data-d="' + d + '" aria-pressed="' + f.disciplines.includes(d) + '" title="' + E.DISCIPLINE_LABELS[d] + '">' + d + '</button>').join('') +
+      '</div>' +
+      '<div class="grid2">' +
+        '<label class="field">Circuit<select data-filter="circuit"><option value="TOUS">Tous</option>' +
+          E.CIRCUITS.map((c) => '<option value="' + c + '"' + (f.circuit === c ? ' selected' : '') + '>' + c + ' · ' + E.CIRCUIT_LABELS[c] + '</option>').join('') + '</select></label>' +
+        '<label class="field">Type<select data-filter="type">' +
+          [['TOUS', 'Courses et stages'], ['course', 'Courses'], ['stage', 'Stages']].map(([v, l]) => '<option value="' + v + '"' + (f.type === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select></label>' +
+      '</div></div>';
+  }
+
+  function renderMonth(events, overlaps) {
+    const [y, m] = parts(ui.month + '-01');
+    const first = new Date(Date.UTC(y, m - 1, 1));
+    const offset = (first.getUTCDay() + 6) % 7; // lundi = 0
+    const nDays = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const idx = seasonMonths.indexOf(ui.month);
+    let html = '<div class="month-nav">' +
+      '<button class="btn icon" data-action="month" data-step="-1" ' + (idx <= 0 ? 'disabled' : '') + ' aria-label="Mois précédent">‹</button>' +
+      '<h2>' + MOIS[m - 1] + ' ' + y + '</h2>' +
+      '<button class="btn icon" data-action="month" data-step="1" ' + (idx >= seasonMonths.length - 1 ? 'disabled' : '') + ' aria-label="Mois suivant">›</button></div>';
+    html += '<div class="cal">' + ['L', 'M', 'M', 'J', 'V', 'S', 'D'].map((d) => '<div class="dow">' + d + '</div>').join('');
+    for (let i = 0; i < offset; i++) html += '<div class="day out"></div>';
+    for (let d = 1; d <= nDays; d++) {
+      const iso = ui.month + '-' + String(d).padStart(2, '0');
+      const evs = events.filter((e) => E.eventOnDay(e, iso));
+      const hasConflict = evs.some((e) => overlaps[e.id]);
+      const shown = evs.slice(0, 3);
+      html += '<button class="day' + (iso === TODAY ? ' today' : '') + (iso === ui.selectedDay ? ' sel' : '') + '" data-action="select-day" data-day="' + iso + '" aria-label="' + d + ' ' + MOIS[m - 1] + ', ' + evs.length + ' événement(s)">' +
+        '<span class="n">' + d + '</span>' +
+        shown.map((e) => '<span class="bar ' + e.type + (e.aConfirmer ? ' tbc' : '') + '">' + esc(e.lieu || e.titre) + '</span>').join('') +
+        (evs.length > 3 ? '<span class="more">+' + (evs.length - 3) + '</span>' : '') +
+        (hasConflict ? '<span class="alert" title="Chevauchement stage ↔ course"></span>' : '') +
+        '</button>';
+    }
+    html += '</div><div class="legend"><span><i style="background:var(--gold)"></i>Course</span><span><i style="background:var(--stage)"></i>Stage</span>' +
+      '<span><i style="background:var(--gold);opacity:.55"></i>À confirmer</span><span><i style="background:var(--danger);border-radius:50%;width:8px"></i>Chevauchement</span></div>';
+
+    // Liste du jour sélectionné (ou du mois si aucun jour).
+    const monthEnd = ui.month + '-' + String(nDays).padStart(2, '0');
+    const list = ui.selectedDay && ui.selectedDay.startsWith(ui.month)
+      ? events.filter((e) => E.eventOnDay(e, ui.selectedDay))
+      : events.filter((e) => e.debut <= monthEnd && e.fin >= ui.month + '-01');
+    html += '<div class="section"><div class="row"><h3>' + (ui.selectedDay && ui.selectedDay.startsWith(ui.month) ? fmtDate(ui.selectedDay) : 'Ce mois-ci') + '</h3>' +
+      '<span class="muted small">' + list.length + ' événement(s)</span><span class="spacer"></span>' +
+      (ui.selectedDay ? '<button class="btn sm ghost" data-action="clear-day">Tout le mois</button>' : '') + '</div>' +
+      '<div style="margin-top:8px">' + (list.length ? list.map((e) => eventCard(e, overlaps)).join('') : '<p class="muted small">Aucun événement.</p>') + '</div></div>';
+    return html;
+  }
+
+  function renderList(events, overlaps) {
+    if (!events.length) return '<p class="muted section">Aucun événement pour ces filtres.</p>';
+    let html = '', cur = '';
+    for (const e of events) {
+      const k = e.debut.slice(0, 7);
+      if (k !== cur) { cur = k; const [y, m] = parts(k + '-01'); html += '<div class="month-title">' + MOIS[m - 1] + ' ' + y + '</div>'; }
+      html += eventCard(e, overlaps);
+    }
+    return html;
+  }
+
+  function renderCalendar() {
+    const events = filteredEvents();
+    const overlaps = E.detectOverlaps(allEvents());
+    const nConflicts = state.stages.filter((s) => overlaps[s.id]).length;
+    $('#view-calendar').innerHTML =
+      '<div class="section banner"><b>Calendrier provisoire.</b> ' + esc(DATA.meta.statut) + (state.courses ? ' <span class="muted">(calendrier des courses importé / modifié)</span>' : '') + '</div>' +
+      (nConflicts ? '<div class="section banner warn"><b>⚠ ' + nConflicts + ' stage(s)</b> chevauchent une course.</div>' : '') +
+      '<div class="section row"><div class="seg" role="group" aria-label="Vue">' +
+        '<button data-action="cal-view" data-v="mois" aria-pressed="' + (ui.calView === 'mois') + '">Mois</button>' +
+        '<button data-action="cal-view" data-v="liste" aria-pressed="' + (ui.calView === 'liste') + '">Liste</button></div>' +
+        '<span class="spacer"></span><button class="btn primary" data-action="new-stage">＋ Stage</button></div>' +
+      '<div class="section">' + renderFilters() + '</div>' +
+      (ui.calView === 'mois' ? renderMonth(events, overlaps) : '<div class="section">' + renderList(events, overlaps) + '</div>');
+  }
+
+  /* ---------- Fiches (modales) ---------- */
+  const sheet = () => $('#sheet');
+  function openSheet(html) {
+    $('#sheetBody').innerHTML = html;
+    const d = sheet();
+    if (typeof d.showModal === 'function') { if (!d.open) d.showModal(); } else d.setAttribute('open', '');
+    $('#sheetBody').scrollTop = 0;
+  }
+  function closeSheet() { const d = sheet(); if (d.open) { if (typeof d.close === 'function') d.close(); else d.removeAttribute('open'); } }
+  const sheetHead = (title) => '<div class="sheet-head"><h2>' + title + '</h2><button class="btn icon ghost" data-action="close-sheet" aria-label="Fermer">✕</button></div>';
+
+  function openEvent(id) {
+    const e = eventById(id); if (!e) return;
+    const overlaps = E.detectOverlaps(allEvents());
+    const conflicts = (overlaps[e.id] || []).map(eventById).filter(Boolean);
+    const lv = E.levelForEvent(e), dpl = E.defaultPL(e);
+    const names = (e.athletes || []).map((aid) => (state.athletes.find((a) => a.id === aid) || { nom: aid }).nom);
+    let html = sheetHead(esc(e.titre)) +
+      '<div class="row" style="margin-bottom:12px">' + (e.type === 'stage' ? '<span class="chip stage">Stage</span>' : '<span class="chip gold">' + esc(E.CIRCUIT_LABELS[e.circuit] || e.circuit) + '</span>') +
+        (e.aConfirmer ? '<span class="chip tbc">à confirmer</span>' : '') + '</div>' +
+      '<dl class="kv"><dt>Dates</dt><dd>' + fmtRange(e.debut, e.fin) + '</dd>' +
+      '<dt>Lieu</dt><dd>' + esc([e.lieu, e.pays].filter(Boolean).join(' · ') || '—') + '</dd>' +
+      '<dt>Disciplines</dt><dd class="row">' + discChips(e.disciplines) + '</dd>';
+    if (e.type === 'course') {
+      html += '<dt>Niveau WSPL</dt><dd>' + (e.niveauWSPL ? stars(e.niveauWSPL) + ' ' + esc(e.niveauWSPL) : '<span class="muted">non précisé' + (lv.niveau ? ' — supposé ' + lv.niveau + ' (circuit ' + e.circuit + ')' : '') + '</span>') + '</dd>' +
+        '<dt>PL par défaut</dt><dd>' + dpl.PL + ' <span class="muted small">(fourchette ' + dpl.min + '–' + dpl.max + (dpl.hypothese ? ', hypothèse' : '') + ')</span></dd>';
+    }
+    if (names.length) html += '<dt>Athlètes</dt><dd>' + names.map(esc).join(', ') + '</dd>';
+    if (e.notes) html += '<dt>Notes</dt><dd>' + esc(e.notes) + '</dd>';
+    html += '</dl>';
+    if (conflicts.length) {
+      html += '<div class="banner warn section"><b>⚠ Chevauchement</b> avec :<ul style="margin:6px 0 0;padding-left:18px">' +
+        conflicts.map((c) => '<li>' + esc(c.titre) + ' — ' + fmtRange(c.debut, c.fin) + '</li>').join('') + '</ul></div>';
+    }
+    html += '<div class="section row">';
+    if (e.type === 'course') {
+      const ds = e.disciplines.length ? e.disciplines : [];
+      if (ds.length) html += ds.map((d) => '<button class="btn primary" data-action="simulate-here" data-id="' + esc(e.id) + '" data-d="' + d + '">Simuler un résultat ici · ' + d + '</button>').join('');
+      else html += '<button class="btn primary" data-action="simulate-here" data-id="' + esc(e.id) + '" data-d="">Simuler un résultat ici</button>';
+    } else {
+      html += '<button class="btn primary" data-action="edit-stage" data-id="' + esc(e.id) + '">Modifier</button>' +
+        '<button class="btn danger" data-action="delete-stage" data-id="' + esc(e.id) + '">Supprimer</button>';
+    }
+    html += '</div>';
+    openSheet(html);
+  }
+
+  function openStageForm(id) {
+    const s = id ? state.stages.find((x) => x.id === id) : null;
+    const v = s || { titre: '', debut: ui.selectedDay || TODAY, fin: ui.selectedDay || TODAY, lieu: '', pays: '', disciplines: [], athletes: [], notes: '' };
+    openSheet(sheetHead(s ? 'Modifier le stage' : 'Nouveau stage') +
+      '<form id="stageForm" class="stack" data-id="' + esc(s ? s.id : '') + '">' +
+      '<label class="field">Titre<input type="text" name="titre" required value="' + esc(v.titre) + '" placeholder="Stage glacier, prépa physique…"></label>' +
+      '<div class="grid2"><label class="field">Début<input type="date" name="debut" required value="' + esc(v.debut) + '"></label>' +
+      '<label class="field">Fin<input type="date" name="fin" required value="' + esc(v.fin) + '"></label></div>' +
+      '<div class="grid2"><label class="field">Lieu<input type="text" name="lieu" value="' + esc(v.lieu) + '"></label>' +
+      '<label class="field">Pays (code)<input type="text" name="pays" maxlength="3" value="' + esc(v.pays) + '" placeholder="FRA"></label></div>' +
+      '<fieldset style="border:0;padding:0;margin:0"><legend class="small muted">Disciplines</legend><div class="row" style="margin-top:4px">' +
+        E.DISCIPLINES.map((d) => '<label class="row small"><input type="checkbox" name="disc" value="' + d + '"' + (v.disciplines.includes(d) ? ' checked' : '') + '> ' + d + '</label>').join('') + '</div></fieldset>' +
+      (state.athletes.length ? '<fieldset style="border:0;padding:0;margin:0"><legend class="small muted">Athlètes</legend><div class="stack" style="margin-top:4px">' +
+        state.athletes.map((a) => '<label class="row small"><input type="checkbox" name="ath" value="' + esc(a.id) + '"' + (v.athletes.includes(a.id) ? ' checked' : '') + '> ' + esc(a.nom) + '</label>').join('') + '</div></fieldset>' : '') +
+      '<label class="field">Notes<textarea name="notes" rows="3">' + esc(v.notes) + '</textarea></label>' +
+      '<p class="small test-ko" id="stageErr"></p>' +
+      '<div class="row"><button class="btn primary" type="submit">Enregistrer</button><button class="btn ghost" type="button" data-action="close-sheet">Annuler</button></div>' +
+      '</form>');
+  }
+
+  function submitStage(form) {
+    const fd = new FormData(form);
+    const id = form.dataset.id || uid('s');
+    const ev = E.normalizeEvent({
+      id, type: 'stage', titre: (fd.get('titre') || '').trim(), debut: fd.get('debut'), fin: fd.get('fin'),
+      lieu: (fd.get('lieu') || '').trim(), pays: (fd.get('pays') || '').trim().toUpperCase(),
+      disciplines: fd.getAll('disc'), circuit: 'AUTRE', niveauWSPL: null, athletes: fd.getAll('ath'), notes: (fd.get('notes') || '').trim()
+    });
+    const errs = E.validateEvent(ev);
+    if (errs.length) { $('#stageErr').textContent = 'À corriger : ' + errs.join(', '); return; }
+    const i = state.stages.findIndex((s) => s.id === id);
+    if (i >= 0) state.stages[i] = ev; else state.stages.push(ev);
+    save.stages();
+    closeSheet();
+    const conflicts = E.detectOverlaps(allEvents())[id];
+    toast(conflicts ? '⚠ Stage enregistré — chevauche ' + conflicts.length + ' course(s)' : 'Stage enregistré');
+    ui.month = seasonMonths.includes(ev.debut.slice(0, 7)) ? ev.debut.slice(0, 7) : ui.month;
+    renderCalendar();
+  }
+
+  /* =================================================================
+     SIMULATEUR
+     ================================================================= */
+  const th = (d) => state.settings.thresholds[d] || { WC: null, EC: null };
+
+  function gauge(score, t) {
+    const marks = [t.EC, t.WC].filter((x) => typeof x === 'number' && x > 0);
+    const max = Math.max(100, score * 1.15, ...marks.map((x) => x * 1.2));
+    const pct = (x) => Math.min(100, (x / max) * 100).toFixed(2) + '%';
+    return '<div class="gauge" role="img" aria-label="Score ' + pts(score) + '">' +
+      '<div class="fill" style="width:' + pct(score) + '"></div>' +
+      (typeof t.EC === 'number' && t.EC > 0 ? '<div class="mark" style="left:' + pct(t.EC) + '"><span>EC ' + t.EC + '</span></div>' : '') +
+      (typeof t.WC === 'number' && t.WC > 0 ? '<div class="mark wc" style="left:' + pct(t.WC) + '"><span>WC ' + t.WC + '</span></div>' : '') +
+      '</div>';
+  }
+  const thLabel = (x, kind) => x === null || x === undefined ? (kind === 'WC' ? 'pas de WC' : "pas d'EC") : x === 0 ? 'aucun minimum' : x + ' pts';
+  function statusChip(st) {
+    const cls = st.niveau === 'WC' ? 'ok' : st.niveau === 'EC' ? 'gold' : 'warn';
+    return '<span class="chip ' + cls + '">' + esc(st.label) + '</span>';
+  }
+
+  function renderSim() {
+    const a = athlete();
+    if (a && !ui.sim.athleteId) ui.sim.athleteId = a.id;
+    const root = $('#view-sim');
+    if (!a) {
+      root.innerHTML = '<div class="section card"><p>Aucun athlète.</p><button class="btn primary" data-action="new-athlete">＋ Ajouter un athlète</button></div>';
+      return;
+    }
+    root.innerHTML =
+      '<div class="section card stack">' +
+        '<div class="row"><label class="field" style="flex:1">Athlète<select data-sim="athlete">' +
+          state.athletes.map((x) => '<option value="' + esc(x.id) + '"' + (x.id === a.id ? ' selected' : '') + '>' + esc(x.nom) + ' (' + x.genre + ')</option>').join('') +
+        '</select></label><button class="btn icon" data-action="new-athlete" aria-label="Ajouter un athlète" style="margin-top:18px">＋</button>' +
+        '<button class="btn icon ghost" data-action="edit-athlete" aria-label="Modifier l\'athlète" style="margin-top:18px">✎</button></div>' +
+        '<div class="grid2"><label class="field">Genre<select data-sim="genre"><option value="H"' + (a.genre === 'H' ? ' selected' : '') + '>Homme</option><option value="F"' + (a.genre === 'F' ? ' selected' : '') + '>Femme</option></select></label>' +
+        '<label class="field">Date de référence<input type="date" data-sim="refDate" value="' + esc(ui.sim.refDate) + '"></label></div>' +
+        (a.exemple ? '<div class="banner"><b>EXEMPLE</b> — athlète et résultats fictifs, à remplacer.</div>' : '') +
+      '</div>' +
+      '<div class="section"><h2>Comparatif des disciplines</h2><div class="card" style="margin-top:8px;padding:6px 10px" id="sim-compare"></div></div>' +
+      '<div class="section" id="sim-detail"></div>' +
+      '<div class="section card stack" id="sim-whatif"></div>' +
+      '<div class="section card stack" id="sim-expiry"></div>';
+    renderCompare(); renderDetail(); renderWhatIfForm(); renderExpiry();
+  }
+
+  function renderCompare() {
+    const rows = E.compareDisciplines(athleteResults(), ui.sim.refDate, state.settings.thresholds, engineOpts());
+    const closest = rows.filter((r) => r.prochain).sort((x, y) => x.prochain.manque - y.prochain.manque)[0];
+    $('#sim-compare').innerHTML = '<table class="t"><thead><tr><th>Disc.</th><th class="r">Score</th><th class="r">Rés.</th><th>Statut</th></tr></thead><tbody>' +
+      rows.map((r) => '<tr class="clickable' + (r.discipline === ui.sim.discipline ? ' active' : '') + '" data-action="pick-disc" data-d="' + r.discipline + '">' +
+        '<td><b>' + r.discipline + '</b><div class="tiny muted">' + E.DISCIPLINE_LABELS[r.discipline] + '</div></td>' +
+        '<td class="r num"><b>' + pts(r.score) + '</b>' + (r.complete ? '<div class="tiny muted">complété par 0</div>' : '') + '</td>' +
+        '<td class="r num">' + r.nbResultats + '</td>' +
+        '<td>' + statusChip(r.statut) + '</td></tr>').join('') +
+      '</tbody></table>' +
+      (closest ? '<p class="small muted" style="margin:8px 4px">Discipline la plus proche d\'un seuil : <b>' + closest.discipline + '</b> — manque ' + pts(closest.prochain.manque) + ' pts pour la ' + closest.prochain.seuil + '.</p>' : '');
+  }
+
+  function renderDetail() {
+    const d = ui.sim.discipline, t = th(d);
+    const s = E.disciplineScore(athleteResults(), d, ui.sim.refDate, engineOpts());
+    const st = E.thresholdStatus(s.score, t);
+    const topIds = new Set(s.top.map((r) => r.id));
+    const rows = s.retenus.concat(s.horsFenetre, s.invalides).sort((x, y) => (x.date < y.date ? 1 : -1));
+    $('#sim-detail').innerHTML =
+      '<div class="row"><h2>' + d + ' · ' + E.DISCIPLINE_LABELS[d] + '</h2><span class="spacer"></span>' +
+        '<div class="seg">' + E.DISCIPLINES.map((x) => '<button data-action="pick-disc" data-d="' + x + '" aria-pressed="' + (x === d) + '">' + x + '</button>').join('') + '</div></div>' +
+      '<div class="card" style="margin-top:8px">' +
+        '<div class="row"><div><div class="tiny muted">Score au ' + fmtDate(ui.sim.refDate) + '</div><div class="score-big">' + pts(s.score) + '</div></div><span class="spacer"></span>' + statusChip(st) + '</div>' +
+        gauge(s.score, t) +
+        '<div class="small muted">Seuil EC : ' + thLabel(t.EC, 'EC') + ' · Seuil WC : ' + thLabel(t.WC, 'WC') + '</div>' +
+        (s.complete ? '<div class="banner" style="margin-top:10px"><b>Hypothèse :</b> ' + s.top.length + ' résultat(s) sur 3 — la moyenne est faite sur 3, les résultats manquants valent 0. <a href="#" data-action="tab" data-tab="settings">Modifier ce réglage</a></div>' : '') +
+        (!state.settings.padToThree && s.top.length < 3 && s.top.length > 0 ? '<div class="banner" style="margin-top:10px"><b>Réglage :</b> moyenne sur ' + s.top.length + ' résultat(s) seulement (complétion par 0 désactivée).</div>' : '') +
+      '</div>' +
+      '<div class="card" style="margin-top:12px"><div class="row"><h3>Résultats (52 semaines glissantes)</h3><span class="spacer"></span><button class="btn sm primary" data-action="new-result">＋ Résultat</button></div>' +
+        (rows.length ? rows.map((r) => {
+          const out = !topIds.has(r.id) && !s.retenus.some((x) => x.id === r.id);
+          return '<div class="res' + (out ? ' out' : '') + '">' +
+            '<div class="num small">' + fmtDate(r.date) + '</div>' +
+            '<div style="min-width:0"><div class="small" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(r.course || '—') + '</div>' +
+              '<div class="tiny muted">' + r.place + 'e / ' + r.F + ' · PL ' + r.PL +
+              (topIds.has(r.id) ? ' · <span class="top-badge">★ top 3</span>' : '') +
+              (r.points === null ? ' · <span class="test-ko">données invalides</span>' : out ? ' · hors fenêtre' : ' · sort le ' + fmtDate(E.expiryDate(r.date))) + '</div></div>' +
+            '<div class="row" style="gap:4px"><span class="pts num">' + (r.points === null ? '—' : pts(r.points)) + '</span>' +
+              '<button class="btn sm ghost" data-action="edit-result" data-id="' + esc(r.id) + '" aria-label="Modifier">✎</button></div></div>';
+        }).join('') : '<p class="small muted">Aucun résultat dans cette discipline.</p>') +
+      '</div>';
+  }
+
+  /* ---------- « Et si ? » + calcul inverse (même contexte de course) ---------- */
+  function disciplineCourses(d) { return courses().filter((c) => c.disciplines.includes(d) || !c.disciplines.length); }
+
+  function setCtxFromCourse(courseId) {
+    const c = ui.sim.ctx, ev = courseId ? eventById(courseId) : null;
+    c.courseId = ev ? ev.id : '';
+    if (ev) {
+      const dpl = E.defaultPL(ev);
+      c.date = ev.fin; c.niveau = dpl.niveau; c.PL = dpl.PL;
+    }
+    c.place = Math.min(c.place, c.F);
+  }
+
+  function renderWhatIfForm() {
+    const d = ui.sim.discipline, c = ui.sim.ctx, a = athlete();
+    const ev = c.courseId ? eventById(c.courseId) : null;
+    const range = E.plRange(c.niveau);
+    const lvHyp = ev ? E.levelForEvent(ev).hypothese : false;
+    $('#sim-whatif').innerHTML =
+      '<h2>Et si ? · ' + d + '</h2>' +
+      '<label class="field">Course<select data-ctx="courseId"><option value="">Course libre (hors calendrier)</option>' +
+        disciplineCourses(d).map((x) => '<option value="' + esc(x.id) + '"' + (x.id === c.courseId ? ' selected' : '') + '>' + esc(fmtRange(x.debut, x.fin) + ' · ' + x.titre) + (x.aConfirmer ? ' (à confirmer)' : '') + '</option>').join('') +
+      '</select></label>' +
+      '<div class="grid2"><label class="field">Date (fin de course)<input type="date" data-ctx="date" value="' + esc(c.date) + '"' + (ev ? ' readonly' : '') + '></label>' +
+        '<label class="field">Niveau WSPL<select data-ctx="niveau"' + (ev && ev.niveauWSPL ? ' disabled' : '') + '>' +
+          E.LEVEL_NAMES.slice().reverse().map((n) => '<option value="' + n + '"' + (n === c.niveau ? ' selected' : '') + '>' + '★'.repeat(E.LEVELS[n].etoiles) + ' ' + n + '</option>').join('') + '</select></label></div>' +
+      (lvHyp ? '<div class="banner small"><b>Hypothèse :</b> niveau WSPL non précisé pour cette course — ' + esc(c.niveau) + ' supposé d\'après le circuit.</div>' : '') +
+      '<label class="field">Points Level (PL) : <b class="num" id="plVal">' + c.PL + '</b> <span class="tiny">(' + range.min + '–' + range.max + ')</span>' +
+        '<input type="range" data-ctx="PL" min="' + range.min + '" max="' + range.max + '" step="10" value="' + c.PL + '"></label>' +
+      (c.niveau === 'Elite' ? '<details><summary class="small">Calculer le PL Elite depuis la R-Value</summary>' +
+        '<div class="grid2" style="margin-top:8px"><label class="field">R-Value (' + (a.genre === 'H' ? 'top 8 H' : 'top 5 F') + ')<input type="number" step="0.01" min="0" inputmode="decimal" data-ctx="rValue" value="' + esc(c.rValue) + '"></label>' +
+        '<div><div class="small muted" id="rvOut" style="margin-top:4px">—</div><button class="btn sm" data-action="apply-rvalue" style="margin-top:6px">Appliquer</button></div></div>' +
+        '<p class="tiny muted">PL 1000 : H 4,5–6 / F 3–4,3 · 900 : H 6,01–9,3 / F 4,31–7 · 800 : H 9,31–16 / F 7,01–12 · 700 : H 16,01–25 / F 12,01–19. Au-delà : P-Value (non modélisée).</p></details>' : '') +
+      '<div class="grid2"><label class="field">Classés (F, ' + (a.genre === 'H' ? 'hommes' : 'femmes') + ')<input type="number" min="1" max="200" inputmode="numeric" data-ctx="F" value="' + c.F + '"></label>' +
+        '<label class="field">Place visée (R)<input type="number" min="1" inputmode="numeric" data-ctx="place" value="' + c.place + '"></label></div>' +
+      '<div id="whatifOut"></div>' +
+      '<hr style="border:0;border-top:1px solid var(--border);margin:14px 0">' +
+      '<h3>Calcul inverse</h3>' +
+      '<div class="grid2"><label class="field">Objectif<select data-ctx="target">' +
+        [['WC', 'Seuil WC (' + thLabel(th(d).WC, 'WC') + ')'], ['EC', 'Seuil EC (' + thLabel(th(d).EC, 'EC') + ')'], ['custom', 'Personnalisé']].map(([v, l]) => '<option value="' + v + '"' + (c.target === v ? ' selected' : '') + '>' + l + '</option>').join('') +
+      '</select></label>' +
+      (c.target === 'custom' ? '<label class="field">Score visé<input type="number" min="0" inputmode="decimal" data-ctx="custom" value="' + c.custom + '"></label>' : '<div></div>') + '</div>' +
+      '<div id="inverseOut"></div>';
+    renderWhatIfOut();
+  }
+
+  function renderWhatIfOut() {
+    const d = ui.sim.discipline, c = ui.sim.ctx, a = athlete();
+    const out = $('#whatifOut'), inv = $('#inverseOut');
+    if (!out) return;
+    const F = parseInt(c.F, 10), R = parseInt(c.place, 10), PL = Number(c.PL);
+    const ev = c.courseId ? eventById(c.courseId) : null;
+    const label = ev ? ev.titre : 'Course libre';
+    // R-Value
+    const rv = $('#rvOut');
+    if (rv) {
+      const v = parseFloat(String(c.rValue).replace(',', '.'));
+      if (v > 0) { const r = E.plFromRValue(v, a.genre); rv.textContent = r.PL ? 'PL calculé : ' + r.PL : r.message; }
+      else rv.textContent = 'Saisir une R-Value';
+    }
+    if (!(F >= 1) || !(R >= 1) || R > F || !/^\d{4}-\d{2}-\d{2}$/.test(c.date)) {
+      out.innerHTML = '<p class="small test-ko">Vérifier la saisie : 1 ≤ place ≤ F, date valide.</p>'; inv.innerHTML = ''; return;
+    }
+    const w = E.whatIf(athleteResults(), { date: c.date, place: R, F, PL, course: label }, d, engineOpts());
+    const dcls = w.delta > 0 ? 'delta-pos' : w.delta < 0 ? 'delta-neg' : '';
+    out.innerHTML =
+      '<div class="kpis"><div class="kpi"><div class="v">' + pts(w.points) + '</div><div class="l">pts pour ' + R + 'e/' + F + '</div></div>' +
+      '<div class="kpi"><div class="v">' + pts(w.after.score) + '</div><div class="l">nouveau score</div></div>' +
+      '<div class="kpi"><div class="v ' + dcls + '">' + (w.delta > 0 ? '+' : '') + pts(w.delta) + '</div><div class="l">vs ' + pts(w.before.score) + ' au ' + fmtDate(c.date) + '</div></div></div>' +
+      '<div class="row" style="margin-top:10px">' + statusChip(w.statutApres) +
+        w.franchissements.map((f) => '<span class="chip ok">Seuil ' + f.seuil + ' franchi (' + f.min + ')</span>').join('') +
+        (!w.dansTop3 ? '<span class="chip">hors top 3 : aucun effet</span>' : '') + '</div>' +
+      '<div class="small" style="margin-top:10px"><b>Nouveau top 3</b><ol style="margin:4px 0 0;padding-left:20px">' +
+        w.after.top.map((r) => '<li>' + (r.hypothetique ? '<b>' : '') + pts(r.points) + ' — ' + esc(r.course || '') + ' (' + fmtDate(r.date) + ')' + (r.hypothetique ? ' · hypothèse</b>' : '') + '</li>').join('') +
+      '</ol></div>' +
+      '<p class="tiny muted">Score évalué à la date de la course : les résultats sortis de la fenêtre de 52 semaines à cette date ne comptent plus.' +
+        (w.after.complete ? ' Moyenne complétée par 0 (moins de 3 résultats).' : '') + '</p>';
+
+    // Calcul inverse
+    const t = th(d);
+    const target = c.target === 'custom' ? Number(c.custom) : t[c.target];
+    if (target === null || target === undefined) { inv.innerHTML = '<p class="small muted">Pas de seuil ' + c.target + ' dans cette discipline.</p>'; return; }
+    if (target === 0) { inv.innerHTML = '<p class="small muted">Seuil ' + c.target + ' : aucun minimum — accès sans condition de points WSPL.</p>'; return; }
+    const x = E.minPlaceForTarget(athleteResults(), { date: c.date, F, PL, course: label }, d, target, engineOpts());
+    inv.innerHTML = x.dejaAtteint
+      ? '<div class="banner"><b>Déjà atteint</b> : ' + pts(x.scoreAvant) + ' ≥ ' + target + ' au ' + fmtDate(c.date) + ', quelle que soit la place.</div>'
+      : x.atteignable
+        ? '<div class="banner"><b>Place minimale : ' + x.place + 'e / ' + F + '</b> (' + pts(x.points) + ' pts) → score ' + pts(x.score) + ' ≥ ' + target + '.</div>'
+        : '<div class="banner warn"><b>Inatteignable sur cette course seule</b> : même une victoire donne ' + pts(x.scoreEnPremier) + ' < ' + target + ' (PL ' + PL + ').</div>';
+  }
+
+  /* ---------- Expiration ---------- */
+  function renderExpiry() {
+    const d = ui.sim.discipline;
+    const upcoming = courses().filter((c) => (c.circuit === 'WC' || c.circuit === 'WCH') && c.disciplines.includes(d) && c.debut > ui.sim.refDate).slice(0, 4);
+    if (!ui.sim.expTarget || ui.sim.expTarget <= ui.sim.refDate) ui.sim.expTarget = upcoming[0] ? upcoming[0].debut : E.addDays(ui.sim.refDate, 60);
+    const x = E.expiringResults(athleteResults(), d, ui.sim.refDate, ui.sim.expTarget, engineOpts());
+    const dcls = x.delta < 0 ? 'delta-neg' : '';
+    $('#sim-expiry').innerHTML =
+      '<h2>Expiration · ' + d + '</h2>' +
+      '<p class="small muted">Résultats qui sortent de la fenêtre de 52 semaines entre la date de référence et une date cible (ex. inscription à une WC).</p>' +
+      '<label class="field">Date cible<input type="date" data-sim="expTarget" value="' + esc(ui.sim.expTarget) + '"></label>' +
+      (upcoming.length ? '<div class="row">' + upcoming.map((c) => '<button class="chip" data-action="exp-date" data-date="' + c.debut + '" aria-pressed="' + (ui.sim.expTarget === c.debut) + '">' + esc(c.lieu) + ' · ' + fmtDate(c.debut) + '</button>').join('') + '</div>' : '') +
+      '<div class="kpis"><div class="kpi"><div class="v">' + pts(x.scoreAvant) + '</div><div class="l">au ' + fmtDate(x.fromDate) + '</div></div>' +
+      '<div class="kpi"><div class="v">' + pts(x.scoreCible) + '</div><div class="l">au ' + fmtDate(x.targetDate) + '</div></div>' +
+      '<div class="kpi"><div class="v ' + dcls + '">' + (x.delta > 0 ? '+' : '') + pts(x.delta) + '</div><div class="l">effet</div></div></div>' +
+      (x.expiring.length
+        ? '<div class="banner warn"><b>⚠ ' + x.expiring.length + ' résultat(s) expirent</b><ul style="margin:6px 0 0;padding-left:18px">' +
+          x.expiring.map((r) => '<li>' + esc(r.course) + ' — ' + pts(r.points) + ' pts, sort le ' + fmtDate(r.sortLe) + (r.dansTop3 ? ' <b>(top 3)</b>' : '') + '</li>').join('') + '</ul></div>'
+        : '<p class="small muted">Aucun résultat n\'expire d\'ici là.</p>') +
+      '<p class="tiny muted">Sans nouveau résultat entre les deux dates.</p>';
+  }
+
+  /* ---------- Formulaires : résultat, athlète ---------- */
+  function openResultForm(id) {
+    const r = id ? state.results.find((x) => x.id === id) : null;
+    const v = r || { date: ui.sim.refDate, course: '', discipline: ui.sim.discipline, place: 1, F: 20, PL: 400 };
+    openSheet(sheetHead(r ? 'Modifier le résultat' : 'Nouveau résultat') +
+      '<form id="resultForm" class="stack" data-id="' + esc(r ? r.id : '') + '">' +
+      '<div class="grid2"><label class="field">Date<input type="date" name="date" required value="' + esc(v.date) + '"></label>' +
+      '<label class="field">Discipline<select name="discipline">' + E.DISCIPLINES.map((d) => '<option' + (d === v.discipline ? ' selected' : '') + '>' + d + '</option>').join('') + '</select></label></div>' +
+      '<label class="field">Course<input type="text" name="course" list="courseList" value="' + esc(v.course) + '" placeholder="Nom de la course"></label>' +
+      '<datalist id="courseList">' + courses().map((c) => '<option value="' + esc(c.titre) + '">').join('') + '</datalist>' +
+      '<div class="grid3"><label class="field">Place<input type="number" name="place" min="1" required inputmode="numeric" value="' + v.place + '"></label>' +
+      '<label class="field">Classés (F)<input type="number" name="F" min="1" required inputmode="numeric" value="' + v.F + '"></label>' +
+      '<label class="field">PL<input type="number" name="PL" min="100" max="1000" step="10" required inputmode="numeric" value="' + v.PL + '"></label></div>' +
+      '<p class="small">Points : <b id="resPts">—</b></p><p class="small test-ko" id="resErr"></p>' +
+      '<div class="row"><button class="btn primary" type="submit">Enregistrer</button>' +
+      (r ? '<button class="btn danger" type="button" data-action="delete-result" data-id="' + esc(r.id) + '">Supprimer</button>' : '') +
+      '<button class="btn ghost" type="button" data-action="close-sheet">Annuler</button></div></form>');
+    updateResultPreview();
+  }
+  function readResultForm(form) {
+    const fd = new FormData(form);
+    return { date: fd.get('date'), discipline: fd.get('discipline'), course: (fd.get('course') || '').trim(),
+      place: parseInt(fd.get('place'), 10), F: parseInt(fd.get('F'), 10), PL: Number(fd.get('PL')) };
+  }
+  function updateResultPreview() {
+    const f = $('#resultForm'); if (!f) return;
+    const v = readResultForm(f);
+    try { $('#resPts').textContent = pts(E.pointsForPlace(v.place, v.F, v.PL)); $('#resErr').textContent = ''; }
+    catch (e) { $('#resPts').textContent = '—'; $('#resErr').textContent = e.message; }
+  }
+  function submitResult(form) {
+    const v = readResultForm(form);
+    try { E.pointsForPlace(v.place, v.F, v.PL); E.dayNumber(v.date); } catch (e) { $('#resErr').textContent = e.message; return; }
+    const id = form.dataset.id || uid('r');
+    const rec = Object.assign({ id, athleteId: athlete().id }, v);
+    const i = state.results.findIndex((r) => r.id === id);
+    if (i >= 0) state.results[i] = Object.assign({}, state.results[i], rec, { exemple: state.results[i].exemple }); else state.results.push(rec);
+    save.results(); closeSheet();
+    ui.sim.discipline = v.discipline;
+    renderSim(); toast('Résultat enregistré');
+  }
+
+  function openAthleteForm(edit) {
+    const a = edit ? athlete() : null;
+    openSheet(sheetHead(a ? 'Modifier l\'athlète' : 'Nouvel athlète') +
+      '<form id="athleteForm" class="stack" data-id="' + esc(a ? a.id : '') + '">' +
+      '<label class="field">Nom<input type="text" name="nom" required value="' + esc(a ? a.nom : '') + '"></label>' +
+      '<label class="field">Genre<select name="genre"><option value="H"' + (a && a.genre === 'H' ? ' selected' : '') + '>Homme</option><option value="F"' + (a && a.genre === 'F' ? ' selected' : '') + '>Femme</option></select></label>' +
+      '<div class="row"><button class="btn primary" type="submit">Enregistrer</button>' +
+      (a ? '<button class="btn danger" type="button" data-action="delete-athlete" data-id="' + esc(a.id) + '">Supprimer (et ses résultats)</button>' : '') + '</div></form>');
+  }
+  function submitAthlete(form) {
+    const fd = new FormData(form);
+    const nom = (fd.get('nom') || '').trim(); if (!nom) return;
+    const id = form.dataset.id;
+    if (id) { const a = state.athletes.find((x) => x.id === id); a.nom = nom; a.genre = fd.get('genre'); }
+    else { const a = { id: uid('ath'), nom, genre: fd.get('genre') }; state.athletes.push(a); ui.sim.athleteId = a.id; }
+    save.athletes(); closeSheet(); renderSim();
+  }
+
+  /* =================================================================
+     RÉGLAGES — seuils, hypothèses, import / export, tests
+     ================================================================= */
+  function renderSettings() {
+    const t = state.settings.thresholds;
+    const tests = globalThis.__WSPL_TESTS__ || { results: [], passed: 0, failed: 0 };
+    $('#view-settings').innerHTML =
+      '<div class="section card stack"><h2>Seuils d\'accès (points WSPL)</h2>' +
+      '<p class="small muted">Valeurs par défaut FIS 2026/27, modifiables. Vide = pas de circuit · 0 = aucun minimum.</p>' +
+      '<table class="t"><thead><tr><th>Disc.</th><th>Coupe du Monde</th><th>Coupe d\'Europe</th></tr></thead><tbody>' +
+      E.DISCIPLINES.map((d) => '<tr><td><b>' + d + '</b></td>' +
+        ['WC', 'EC'].map((k) => '<td><input type="number" min="0" inputmode="numeric" style="width:100%" data-th="' + d + '.' + k + '" value="' + (t[d][k] === null ? '' : t[d][k]) + '" placeholder="—"></td>').join('') + '</tr>').join('') +
+      '</tbody></table>' +
+      '<p class="tiny muted">' + esc(DATA.seuilsFisInfo) + '</p>' +
+      '<button class="btn sm" data-action="reset-thresholds">Rétablir les valeurs par défaut</button></div>' +
+
+      '<div class="section card stack"><h2>Hypothèse de calcul</h2>' +
+      '<label class="row"><input type="checkbox" data-setting="padToThree"' + (state.settings.padToThree ? ' checked' : '') + '> ' +
+      '<span>Moins de 3 résultats : moyenne sur 3 (résultats manquants = 0)</span></label>' +
+      '<p class="small muted">Fenêtre glissante : un résultat compte pendant 364 jours (52 semaines), date de référence incluse.</p></div>' +
+
+      '<div class="section card stack"><h2>Import / export des événements</h2>' +
+      '<p class="small muted">JSON au format du modèle commun (courses + stages), réutilisable dans akse-coach.</p>' +
+      '<div class="row"><button class="btn" data-action="export-json">Exporter JSON</button>' +
+      '<button class="btn" data-action="import-json">Importer JSON</button>' +
+      '<button class="btn" data-action="export-ics">Exporter .ics</button></div>' +
+      '<div class="row"><button class="btn sm ghost" data-action="reset-courses"' + (state.courses ? '' : ' disabled') + '>Revenir au calendrier des courses d\'origine</button></div></div>' +
+
+      '<div class="section card stack"><h2>Données d\'EXEMPLE</h2>' +
+      '<p class="small muted">Deux athlètes fictifs et leurs résultats, pour tester le simulateur.</p>' +
+      '<div class="row"><button class="btn sm" data-action="reset-examples">Recharger les exemples</button>' +
+      '<button class="btn sm danger" data-action="clear-examples">Supprimer les exemples</button></div></div>' +
+
+      '<div class="section card"><h2>Tests ENGINE</h2><p class="small ' + (tests.failed ? 'test-ko' : 'test-ok') + '">' + tests.passed + ' / ' + tests.results.length + ' tests OK</p>' +
+      '<ul class="small" style="padding-left:18px;margin:6px 0 0">' + tests.results.map((r) => '<li class="' + (r.ok ? 'test-ok' : 'test-ko') + '">' + (r.ok ? '✓ ' : '✗ ') + esc(r.name) + (r.error ? ' — ' + esc(r.error) : '') + '</li>').join('') + '</ul></div>';
+  }
+
+  /* ---------- Import / export ---------- */
+  function exportJSON() {
+    const payload = { format: 'akse-coach.events', version: 1, exporte: new Date().toISOString(), saison: DATA.meta.saison, events: allEvents() };
+    download('akse-evenements-' + TODAY + '.json', JSON.stringify(payload, null, 2), 'application/json');
+  }
+  function importJSON(text) {
+    let parsed;
+    try { parsed = JSON.parse(text); } catch (e) { toast('Fichier JSON illisible'); return; }
+    const list = Array.isArray(parsed) ? parsed : parsed && Array.isArray(parsed.events) ? parsed.events : null;
+    if (!list) { toast('Format attendu : { events: [...] } ou tableau'); return; }
+    let ok = 0, ko = 0;
+    const newCourses = (state.courses || DATA.courses).map((c) => Object.assign({}, c));
+    let coursesTouched = false;
+    for (const raw of list) {
+      const ev = raw && E.validateEvent(E.normalizeEvent(raw)).length === 0 ? E.normalizeEvent(raw) : null;
+      if (!ev) { ko++; continue; }
+      const target = ev.type === 'stage' ? state.stages : newCourses;
+      const i = target.findIndex((x) => x.id === ev.id);
+      if (i >= 0) target[i] = ev; else target.push(ev);
+      if (ev.type === 'course') coursesTouched = true;
+      ok++;
+    }
+    if (coursesTouched) { state.courses = newCourses; save.courses(); }
+    save.stages();
+    toast(ok + ' événement(s) importé(s)' + (ko ? ', ' + ko + ' ignoré(s)' : ''));
+    renderAll();
+  }
+
+  /* =================================================================
+     Rendu global & actions (délégation d'événements)
+     ================================================================= */
+  function renderAll() {
+    renderCalendar();
+    if (ui.tab === 'sim') renderSim();
+    if (ui.tab === 'settings') renderSettings();
+  }
+  function showTab(tab) {
+    ui.tab = tab;
+    document.querySelectorAll('.tab').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
+    ['calendar', 'sim', 'settings'].forEach((t) => { $('#view-' + t).hidden = t !== tab; });
+    if (tab === 'calendar') renderCalendar();
+    if (tab === 'sim') renderSim();
+    if (tab === 'settings') renderSettings();
+    window.scrollTo(0, 0);
+  }
+
+  const actions = {
+    'tab': (el, ev) => { ev.preventDefault(); showTab(el.dataset.tab); },
+    'theme': () => { state.theme = state.theme === 'auto' ? 'dark' : state.theme === 'dark' ? 'light' : 'auto'; save.theme(); applyTheme(); },
+    'close-sheet': () => closeSheet(),
+    'cal-view': (el) => { ui.calView = el.dataset.v; renderCalendar(); },
+    'month': (el) => {
+      const i = seasonMonths.indexOf(ui.month) + Number(el.dataset.step);
+      if (i >= 0 && i < seasonMonths.length) { ui.month = seasonMonths[i]; ui.selectedDay = null; renderCalendar(); }
+    },
+    'select-day': (el) => { ui.selectedDay = ui.selectedDay === el.dataset.day ? null : el.dataset.day; renderCalendar(); },
+    'clear-day': () => { ui.selectedDay = null; renderCalendar(); },
+    'filter-disc': (el) => {
+      const d = el.dataset.d, f = ui.filters.disciplines;
+      ui.filters.disciplines = f.includes(d) ? f.filter((x) => x !== d) : f.concat(d);
+      renderCalendar();
+    },
+    'open-event': (el) => openEvent(el.dataset.id),
+    'new-stage': () => openStageForm(null),
+    'edit-stage': (el) => openStageForm(el.dataset.id),
+    'delete-stage': (el) => {
+      if (!confirm('Supprimer ce stage ?')) return;
+      state.stages = state.stages.filter((s) => s.id !== el.dataset.id); save.stages(); closeSheet(); renderCalendar(); toast('Stage supprimé');
+    },
+    'simulate-here': (el) => {
+      const ev = eventById(el.dataset.id); if (!ev) return;
+      if (el.dataset.d) ui.sim.discipline = el.dataset.d;
+      setCtxFromCourse(ev.id);
+      closeSheet(); showTab('sim');
+      const w = $('#sim-whatif'); if (w) w.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    },
+    'pick-disc': (el) => {
+      ui.sim.discipline = el.dataset.d;
+      const cur = ui.sim.ctx.courseId && eventById(ui.sim.ctx.courseId);
+      if (cur && cur.disciplines.length && !cur.disciplines.includes(ui.sim.discipline)) ui.sim.ctx.courseId = '';
+      ui.sim.expTarget = null;
+      renderSim();
+    },
+    'new-result': () => openResultForm(null),
+    'edit-result': (el) => openResultForm(el.dataset.id),
+    'delete-result': (el) => {
+      if (!confirm('Supprimer ce résultat ?')) return;
+      state.results = state.results.filter((r) => r.id !== el.dataset.id); save.results(); closeSheet(); renderSim();
+    },
+    'new-athlete': () => openAthleteForm(false),
+    'edit-athlete': () => openAthleteForm(true),
+    'delete-athlete': (el) => {
+      if (!confirm('Supprimer cet athlète et tous ses résultats ?')) return;
+      const id = el.dataset.id;
+      state.athletes = state.athletes.filter((a) => a.id !== id);
+      state.results = state.results.filter((r) => r.athleteId !== id);
+      state.stages.forEach((s) => { s.athletes = s.athletes.filter((x) => x !== id); });
+      ui.sim.athleteId = state.athletes[0] ? state.athletes[0].id : null;
+      save.athletes(); save.results(); save.stages(); closeSheet(); renderSim();
+    },
+    'apply-rvalue': (el, ev) => {
+      ev.preventDefault();
+      const v = parseFloat(String(ui.sim.ctx.rValue).replace(',', '.'));
+      if (!(v > 0)) { toast('Saisir une R-Value'); return; }
+      const r = E.plFromRValue(v, athlete().genre);
+      if (!r.PL) { toast(r.message); return; }
+      ui.sim.ctx.PL = E.clampPL(r.PL, ui.sim.ctx.niveau); renderWhatIfForm(); toast('PL ' + ui.sim.ctx.PL + ' appliqué');
+    },
+    'exp-date': (el) => { ui.sim.expTarget = el.dataset.date; renderExpiry(); },
+    'reset-thresholds': () => { state.settings.thresholds = clone(DATA.seuils); save.settings(); renderSettings(); toast('Seuils rétablis'); },
+    'export-json': () => exportJSON(),
+    'import-json': () => $('#importFile').click(),
+    'export-ics': () => {
+      const evs = filteredEvents();
+      download('akse-calendrier-' + TODAY + '.ics', E.toICS(evs, { now: new Date().toISOString(), calName: 'ak.se · Courses & stages ' + DATA.meta.saison }), 'text/calendar');
+      toast(evs.length + ' événement(s) exporté(s) (filtres du calendrier appliqués)');
+    },
+    'reset-courses': () => { if (!confirm('Revenir au calendrier des courses d\'origine ?')) return; state.courses = null; store.remove('courses'); renderAll(); renderSettings(); toast('Calendrier des courses rétabli'); },
+    'reset-examples': () => {
+      const exIds = DATA.exemple.athletes.map((a) => a.id);
+      state.athletes = state.athletes.filter((a) => !exIds.includes(a.id)).concat(clone(DATA.exemple.athletes));
+      state.results = state.results.filter((r) => !r.exemple).concat(clone(DATA.exemple.resultats));
+      save.athletes(); save.results(); toast('Exemples rechargés');
+    },
+    'clear-examples': () => {
+      if (!confirm('Supprimer les athlètes et résultats d\'EXEMPLE ?')) return;
+      state.athletes = state.athletes.filter((a) => !a.exemple);
+      state.results = state.results.filter((r) => !r.exemple);
+      ui.sim.athleteId = state.athletes[0] ? state.athletes[0].id : null;
+      save.athletes(); save.results(); toast('Exemples supprimés');
+    }
+  };
+
+  document.addEventListener('click', (ev) => {
+    const el = ev.target.closest('[data-action]');
+    if (!el || el.disabled) return;
+    const fn = actions[el.dataset.action];
+    if (fn) fn(el, ev);
+  });
+  // Clic sur le fond de la modale → fermeture.
+  sheet().addEventListener('click', (ev) => { if (ev.target === sheet()) closeSheet(); });
+
+  document.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    const f = ev.target;
+    if (f.id === 'stageForm') submitStage(f);
+    if (f.id === 'resultForm') submitResult(f);
+    if (f.id === 'athleteForm') submitAthlete(f);
+  });
+
+  document.addEventListener('input', (ev) => {
+    const el = ev.target;
+    if (el.closest('#resultForm')) { updateResultPreview(); return; }
+    if (el.dataset.ctx) {
+      const k = el.dataset.ctx, c = ui.sim.ctx;
+      if (k === 'PL') { c.PL = Number(el.value); $('#plVal').textContent = c.PL; }
+      else if (k === 'F' || k === 'place') c[k] = el.value;
+      else if (k === 'rValue' || k === 'custom') c[k] = el.value;
+      else return; // selects / date : gérés sur 'change'
+      renderWhatIfOut();
+    }
+  });
+
+  document.addEventListener('change', (ev) => {
+    const el = ev.target;
+    if (el.dataset.filter) { ui.filters[el.dataset.filter] = el.value; renderCalendar(); return; }
+    if (el.dataset.ctx) {
+      const k = el.dataset.ctx, c = ui.sim.ctx;
+      if (k === 'courseId') { setCtxFromCourse(el.value); renderWhatIfForm(); }
+      else if (k === 'niveau') { c.niveau = el.value; c.PL = E.clampPL(c.PL, c.niveau); renderWhatIfForm(); }
+      else if (k === 'target') { c.target = el.value; renderWhatIfForm(); }
+      else if (k === 'date') { if (el.value) { c.date = el.value; renderWhatIfOut(); } }
+      return;
+    }
+    if (el.dataset.sim) {
+      const k = el.dataset.sim;
+      if (k === 'athlete') { ui.sim.athleteId = el.value; renderSim(); }
+      else if (k === 'genre') { const a = athlete(); a.genre = el.value; save.athletes(); renderSim(); }
+      else if (k === 'refDate' && el.value) { ui.sim.refDate = el.value; ui.sim.expTarget = null; renderSim(); }
+      else if (k === 'expTarget' && el.value) { ui.sim.expTarget = el.value; renderExpiry(); }
+      return;
+    }
+    if (el.dataset.th) {
+      const [d, k] = el.dataset.th.split('.');
+      const raw = el.value.trim();
+      state.settings.thresholds[d][k] = raw === '' ? null : Math.max(0, Number(raw));
+      save.settings(); return;
+    }
+    if (el.dataset.setting === 'padToThree') { state.settings.padToThree = el.checked; save.settings(); return; }
+    if (el.id === 'importFile' && el.files && el.files[0]) {
+      const reader = new FileReader();
+      reader.onload = () => { importJSON(String(reader.result)); el.value = ''; };
+      reader.readAsText(el.files[0]);
+    }
+  });
+
+  /* ---------- Démarrage ---------- */
+  applyTheme();
+  renderCalendar();
+
+  // API minimale pour l'intégration / le débogage.
+  globalThis.WSPLModule = { state, ui, allEvents, renderAll, showTab };
+})();
+</script>
+</body>
+</html>
